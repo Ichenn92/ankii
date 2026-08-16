@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -22,6 +24,30 @@ def test_check_version_reports_available_update(monkeypatch, capsys) -> None:
     assert f"Installed: {__version__}" in output
     assert "Latest:    9.9.9" in output
     assert "ankii upgrade" in output
+
+
+def test_fetch_latest_version_uses_github_contents_api(monkeypatch) -> None:
+    payload = json.dumps(
+        {"content": base64.b64encode(b'[project]\nversion = "0.5.1"\n').decode("ascii")}
+    ).encode("utf-8")
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return payload
+
+    monkeypatch.setattr(
+        update_check.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: Response(),
+    )
+
+    assert update_check._fetch_latest_version() == "0.5.1"
 
 
 def test_upgrade_runs_pipx(monkeypatch, capsys) -> None:
