@@ -485,7 +485,13 @@ def run_anki(
             None,
         )
         selected_model = _choose("note type", models, preferred)
-        return run_anki(command, selected_model)
+        return run_anki(
+            command,
+            selected_model,
+            profile,
+            vocabulary_model,
+            grammar_model,
+        )
     elif command == "setup-note-types":
         source_model = model or profile.study_language
         print(

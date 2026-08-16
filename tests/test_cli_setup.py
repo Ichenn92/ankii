@@ -112,6 +112,31 @@ def test_disables_deck_audio_autoplay_but_keeps_other_options(invoke) -> None:
     ) in invoke.mock_calls
 
 
+def test_setup_note_type_prompt_preserves_active_profile(monkeypatch) -> None:
+    profile = LanguageProfile("french", "French", "English", "French", "A1", "B2")
+    monkeypatch.setattr(cli, "invoke", lambda action, **_kwargs: ["Vocabulary"])
+    monkeypatch.setattr(cli, "_choose", lambda *_args: "Vocabulary")
+    monkeypatch.setattr("builtins.input", lambda _prompt: "UPDATE")
+    monkeypatch.setattr(
+        cli,
+        "setup_note_type",
+        lambda _model: {
+            "fields_added": 0,
+            "notes_migrated": 0,
+            "templates_updated": 0,
+            "styling_updated": 0,
+        },
+    )
+    decks = []
+    monkeypatch.setattr(
+        cli, "_disable_deck_audio_autoplay", lambda deck: decks.append(deck) or True
+    )
+
+    assert cli.run_anki("setup-note-type", profile=profile) == 0
+
+    assert decks == ["French"]
+
+
 @patch("ankii.cli.invoke")
 def test_bootstrap_note_types_creates_profile_deck(invoke, monkeypatch) -> None:
     profile = LanguageProfile("french", "French", "English", "French", "A1", "B2")
