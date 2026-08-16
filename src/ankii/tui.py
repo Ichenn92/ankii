@@ -125,6 +125,20 @@ ACTIONS: tuple[TuiAction, ...] = (
         "Choose which profile is used when no profile is specified.",
     ),
     TuiAction(
+        "profile-list",
+        "l",
+        "List profiles",
+        ("profile", "list"),
+        "Show every configured profile and the current default.",
+    ),
+    TuiAction(
+        "profile-delete",
+        "x",
+        "Delete a profile",
+        ("profile", "delete"),
+        "Remove a profile configuration while preserving its review files.",
+    ),
+    TuiAction(
         "key",
         "k",
         "Manage OpenAI key",

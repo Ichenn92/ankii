@@ -135,6 +135,16 @@ ankii profile create spanish --study-language Spanish --native-language English 
   --deck Spanish --min-level A1 --max-level B2 --default
 ```
 
+Interactive creation selects study and native languages from a validated list. Direct language
+flags are case-insensitive and reject unknown spellings. Omit the profile name to derive it from
+the study language automatically:
+
+```bash
+ankii profile languages
+ankii profile create --study-language Spanish --native-language English --deck Spanish
+# Creates the profile "spanish"
+```
+
 Set any existing profile as the default:
 
 ```bash
@@ -142,7 +152,18 @@ ankii profile default
 ankii profile default spanish
 ```
 
-Both actions are also available from the terminal dashboard.
+List profiles or delete one. Deletion preserves its review and archive files:
+
+```bash
+ankii profile list
+ankii profile delete spanish
+ankii profile delete spanish --yes
+ankii profile delete vietnamese --new-default spanish --yes
+```
+
+Deleting the current default requires a replacement profile. Without `--yes`, deletion asks you
+to type `DELETE` as confirmation. All profile actions are also available from the terminal
+dashboard.
 
 Selection precedence is `--profile`, then `ANKI_PROFILE`, then `default_profile`.
 Each profile has its own review directory and one enforced Anki deck.

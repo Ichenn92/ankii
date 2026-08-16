@@ -60,14 +60,18 @@ from ankii.review import (
     validate_review_profile,
 )
 from ankii.settings import (
+    AVAILABLE_LANGUAGES,
     CEFR_LEVELS,
     DEFAULT_PROFILE,
     LanguageProfile,
     add_profile,
+    canonical_language,
     create_default_settings,
     data_root,
     default_settings_path,
+    delete_profile,
     load_settings,
+    profile_name_for_language,
     set_default_profile,
 )
 from ankii.tagging import suggest_card_tags, suggest_example_sentence, tag_review
@@ -120,12 +124,16 @@ Run 'ankii COMMAND --help' for help with a specific command.""",
 
     profile_parser = commands.add_parser("profile", help="Create and configure study profiles.")
     profile_commands = profile_parser.add_subparsers(dest="profile_command", required=True)
+    profile_commands.add_parser("languages", help="List languages accepted by profile creation.")
+    profile_commands.add_parser("list", help="List configured profiles.")
     create_profile_parser = profile_commands.add_parser(
         "create", help="Create a new language profile."
     )
-    create_profile_parser.add_argument("name", nargs="?", help="Lowercase profile name.")
-    create_profile_parser.add_argument("--study-language")
-    create_profile_parser.add_argument("--native-language")
+    create_profile_parser.add_argument(
+        "name", nargs="?", help="Profile name (default: lowercase study language)."
+    )
+    create_profile_parser.add_argument("--study-language", type=_language_argument)
+    create_profile_parser.add_argument("--native-language", type=_language_argument)
     create_profile_parser.add_argument("--deck")
     create_profile_parser.add_argument("--min-level", choices=CEFR_LEVELS)
     create_profile_parser.add_argument("--max-level", choices=CEFR_LEVELS)
@@ -136,6 +144,19 @@ Run 'ankii COMMAND --help' for help with a specific command.""",
         "default", help="Set the default language profile."
     )
     default_profile_parser.add_argument("name", nargs="?", help="Existing profile name.")
+    delete_profile_parser = profile_commands.add_parser(
+        "delete", help="Remove a profile while preserving its review files."
+    )
+    delete_profile_parser.add_argument("name", nargs="?", help="Existing profile name.")
+    delete_profile_parser.add_argument(
+        "--new-default",
+        help="Replacement default profile (required when deleting the current default).",
+    )
+    delete_profile_parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Delete without asking for confirmation.",
+    )
 
     add_parser = commands.add_parser("add", help="Add a card to the manual vocabulary inbox.")
     add_parser.add_argument(
@@ -341,6 +362,13 @@ epilog="""Examples:
     return parser
 
 
+def _language_argument(value: str) -> str:
+    try:
+        return canonical_language(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
 def run_fetch(lesson_value: str, output: Path | None) -> int:
     lesson = fetch_lesson(lesson_value)
     output_path = output or data_root() / "downloads" / f"lesson-{lesson.public_id}.json"
@@ -544,7 +572,21 @@ def _profile_value(label: str, provided: str | None, default: str | None = None)
 
 
 def run_profile(args: argparse.Namespace, settings_path: Path) -> int:
+    if args.profile_command == "languages":
+        print("Available languages:")
+        for language in AVAILABLE_LANGUAGES:
+            print(f"  {language}")
+        return 0
     settings = load_settings(settings_path)
+    if args.profile_command == "list":
+        print("Configured profiles:")
+        for name, profile in settings.profiles.items():
+            marker = " (default)" if name == settings.default_profile else ""
+            print(
+                f"  {name}{marker}: {profile.study_language} -> "
+                f"{profile.native_language} [{profile.deck}]"
+            )
+        return 0
     if args.profile_command == "default":
         name = args.name or _choose(
             "profile", sorted(settings.profiles), preferred=settings.default_profile
@@ -552,10 +594,40 @@ def run_profile(args: argparse.Namespace, settings_path: Path) -> int:
         updated = set_default_profile(settings_path, name)
         print(f"Default profile: {updated.default_profile}")
         return 0
+    if args.profile_command == "delete":
+        name = args.name or _choose(
+            "profile to delete", sorted(settings.profiles), preferred=settings.default_profile
+        )
+        new_default = args.new_default
+        if name == settings.default_profile and new_default is None:
+            remaining = sorted(
+                profile_name for profile_name in settings.profiles if profile_name != name
+            )
+            new_default = _choose("new default profile", remaining)
+        if not args.yes:
+            confirmation = input(f"Type DELETE to remove profile {name!r}: ").strip()
+            if confirmation != "DELETE":
+                print("Profile deletion cancelled. Nothing was changed.")
+                return 0
+        _updated, review_root = delete_profile(
+            settings_path, name, new_default=new_default
+        )
+        print(f"Deleted profile: {name}")
+        print(f"Review files preserved at: {review_root}")
+        if new_default is not None:
+            print(f"Default profile: {new_default}")
+        return 0
 
-    name = _profile_value("Profile name (lowercase)", args.name)
-    study_language = _profile_value("Study language", args.study_language)
-    native_language = _profile_value("Native language", args.native_language, "English")
+    study_language = args.study_language or _choose(
+        "study language",
+        list(AVAILABLE_LANGUAGES),
+        preferred=settings.select_profile().study_language,
+    )
+    default_name = profile_name_for_language(study_language)
+    name = args.name or default_name
+    native_language = args.native_language or _choose(
+        "native language", list(AVAILABLE_LANGUAGES), preferred="English"
+    )
     deck = _profile_value("Anki deck", args.deck, study_language)
     minimum = args.min_level or _choose("minimum CEFR level", list(CEFR_LEVELS), "A1")
     maximum = args.max_level or _choose("maximum CEFR level", list(CEFR_LEVELS), "B2")

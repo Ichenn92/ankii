@@ -6,6 +6,7 @@ import re
 import sys
 import tempfile
 import tomllib
+import unicodedata
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +14,43 @@ from typing import Any
 
 SETTINGS_VERSION = 1
 CEFR_LEVELS = ("A1", "A2", "B1", "B2", "C1", "C2")
+AVAILABLE_LANGUAGES = (
+    "Arabic",
+    "Cantonese",
+    "Catalan",
+    "Czech",
+    "Danish",
+    "Dutch",
+    "English",
+    "Finnish",
+    "French",
+    "German",
+    "Greek",
+    "Hebrew",
+    "Hindi",
+    "Hungarian",
+    "Indonesian",
+    "Italian",
+    "Japanese",
+    "Korean",
+    "Latin",
+    "Malay",
+    "Mandarin Chinese",
+    "Norwegian",
+    "Persian",
+    "Polish",
+    "Portuguese",
+    "Romanian",
+    "Russian",
+    "Spanish",
+    "Swahili",
+    "Swedish",
+    "Tagalog",
+    "Thai",
+    "Turkish",
+    "Ukrainian",
+    "Vietnamese",
+)
 APP_DIRECTORY_NAME = "ankii"
 DEFAULT_SETTINGS_TOML = """settings_version = 1
 default_profile = "vietnamese"
@@ -193,6 +231,23 @@ def _toml_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def canonical_language(value: str) -> str:
+    normalized = value.strip().casefold()
+    matches = {language.casefold(): language for language in AVAILABLE_LANGUAGES}
+    try:
+        return matches[normalized]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unknown language {value!r}. Run 'ankii profile languages' to list available values."
+        ) from exc
+
+
+def profile_name_for_language(language: str) -> str:
+    canonical = canonical_language(language)
+    ascii_name = unicodedata.normalize("NFKD", canonical).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]+", "-", ascii_name.casefold()).strip("-")
+
+
 def _validated_profile_name(name: str) -> str:
     normalized = name.strip()
     if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", normalized):
@@ -246,8 +301,8 @@ def add_profile(
     if name in settings.profiles:
         raise ValueError(f"Profile {name!r} already exists.")
     values = {
-        "study_language": study_language.strip(),
-        "native_language": native_language.strip(),
+        "study_language": canonical_language(study_language),
+        "native_language": canonical_language(native_language),
         "deck": deck.strip(),
     }
     for key, value in values.items():
@@ -285,3 +340,48 @@ def set_default_profile(path: Path, name: str) -> Settings:
         raise ValueError(f"Unknown profile {name!r}. Available profiles: {available}.")
     text = _replace_default_profile(path.read_text(encoding="utf-8"), name)
     return _write_validated_settings(path, text)
+
+
+def delete_profile(
+    path: Path, name: str, *, new_default: str | None = None
+) -> tuple[Settings, Path]:
+    settings = load_settings(path)
+    name = name.strip()
+    if name not in settings.profiles:
+        available = ", ".join(sorted(settings.profiles))
+        raise ValueError(f"Unknown profile {name!r}. Available profiles: {available}.")
+    remaining = [profile_name for profile_name in settings.profiles if profile_name != name]
+    if not remaining:
+        raise ValueError("The only profile cannot be deleted. Create another profile first.")
+    if name == settings.default_profile:
+        if new_default is None:
+            raise ValueError("Deleting the default profile requires a new default profile.")
+        if new_default not in remaining:
+            available = ", ".join(sorted(remaining))
+            raise ValueError(f"New default must be one of: {available}.")
+    elif new_default is not None:
+        if new_default not in remaining:
+            available = ", ".join(sorted(remaining))
+            raise ValueError(f"New default must be one of: {available}.")
+
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines(keepends=True)
+    header = f"[profiles.{name}]"
+    try:
+        start = next(index for index, line in enumerate(lines) if line.strip() == header)
+    except StopIteration as exc:
+        raise ValueError(f"Could not locate the TOML table for profile {name!r}.") from exc
+    end = next(
+        (
+            index
+            for index in range(start + 1, len(lines))
+            if lines[index].lstrip().startswith("[")
+        ),
+        len(lines),
+    )
+    updated_text = "".join([*lines[:start], *lines[end:]]).rstrip() + "\n"
+    if new_default is not None:
+        updated_text = _replace_default_profile(updated_text, new_default)
+    review_root = settings.profiles[name].review_root
+    updated = _write_validated_settings(path, updated_text)
+    return updated, review_root

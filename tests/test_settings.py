@@ -3,13 +3,58 @@ from pathlib import Path
 import pytest
 
 from ankii.settings import (
+    AVAILABLE_LANGUAGES,
     CEFR_LEVELS,
     add_profile,
+    canonical_language,
     create_default_settings,
     data_root,
+    delete_profile,
     load_settings,
+    profile_name_for_language,
     set_default_profile,
 )
+
+
+def _add_spanish_profile(path: Path) -> None:
+    add_profile(path, "spanish", "Spanish", "English", "Spanish", "A1", "B2")
+
+
+def test_delete_profile_preserves_review_files(tmp_path: Path) -> None:
+    path, _created = create_default_settings(tmp_path / "anki.toml")
+    _add_spanish_profile(path)
+    review_root = load_settings(path).profiles["spanish"].review_root
+    review_file = review_root / "archive" / "saved.review.json"
+    review_file.parent.mkdir(parents=True)
+    review_file.write_text("{}", encoding="utf-8")
+
+    settings, deleted_review_root = delete_profile(path, "spanish")
+
+    assert "spanish" not in settings.profiles
+    assert deleted_review_root == review_root
+    assert review_file.exists()
+
+
+def test_delete_default_profile_requires_and_applies_replacement(tmp_path: Path) -> None:
+    path, _created = create_default_settings(tmp_path / "anki.toml")
+    _add_spanish_profile(path)
+
+    with pytest.raises(ValueError, match="requires a new default"):
+        delete_profile(path, "vietnamese")
+
+    settings, _review_root = delete_profile(path, "vietnamese", new_default="spanish")
+
+    assert settings.default_profile == "spanish"
+    assert "vietnamese" not in settings.profiles
+    assert "spanish" in settings.profiles
+
+
+def test_delete_only_profile_is_rejected(tmp_path: Path) -> None:
+    path, _created = create_default_settings(tmp_path / "anki.toml")
+    delete_profile(path, "french")
+
+    with pytest.raises(ValueError, match="only profile"):
+        delete_profile(path, "vietnamese", new_default="vietnamese")
 
 
 def _write(path: Path, body: str) -> Path:
@@ -97,6 +142,16 @@ analysis_max_level = "{maximum}"
 
 def test_cefr_scale_includes_advanced_levels() -> None:
     assert CEFR_LEVELS == ("A1", "A2", "B1", "B2", "C1", "C2")
+
+
+def test_languages_are_canonical_and_generate_default_profile_names() -> None:
+    assert "Spanish" in AVAILABLE_LANGUAGES
+    assert canonical_language("sPaNiSh") == "Spanish"
+    assert profile_name_for_language("Spanish") == "spanish"
+    assert profile_name_for_language("Mandarin Chinese") == "mandarin-chinese"
+
+    with pytest.raises(ValueError, match="profile languages"):
+        canonical_language("Spanisch")
 
 
 def test_data_root_honors_environment_override(monkeypatch, tmp_path: Path) -> None:

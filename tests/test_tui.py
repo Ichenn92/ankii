@@ -24,3 +24,5 @@ def test_profile_management_actions_are_available() -> None:
 
     assert commands["profile-create"] == ("profile", "create")
     assert commands["profile-default"] == ("profile", "default")
+    assert commands["profile-list"] == ("profile", "list")
+    assert commands["profile-delete"] == ("profile", "delete")
