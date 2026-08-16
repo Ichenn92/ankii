@@ -54,6 +54,13 @@ class TuiAction:
 ACTIONS: tuple[TuiAction, ...] = (
     TuiAction("add", "a", "Add a word", ("add",), "Create a vocabulary card in the inbox."),
     TuiAction(
+        "new",
+        "2",
+        "Create from word list",
+        ("new",),
+        "Paste a target-language, native-language, or mixed list and create a review.",
+    ),
+    TuiAction(
         "analyze",
         "n",
         "Analyze text",

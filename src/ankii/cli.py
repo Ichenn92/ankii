@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import html
 import os
+import re
 import sys
 import unicodedata
 import urllib.error
@@ -113,6 +114,7 @@ from ankii.tone_family import (
     tone_family_from_review,
     tone_family_to_review,
 )
+from ankii.word_list import generate_word_list_review
 from ankii.yourhomework import fetch_lesson
 
 
@@ -194,6 +196,28 @@ Run 'ankii COMMAND --help' for help with a specific command.""",
         type=Path,
         default=None,
         help="Inbox review JSON (default: active profile inbox).",
+    )
+
+    new_parser = commands.add_parser(
+        "new",
+        help="Create a review JSON from a mixed-language word list.",
+        description=(
+            "Create complete vocabulary cards from a file, piped input, or an interactive "
+            "paste. Each line may be in the studied language, native language, or contain both."
+        ),
+    )
+    new_parser.add_argument(
+        "input_file",
+        nargs="?",
+        type=Path,
+        help="Text file with one entry per line (default: stdin or interactive paste).",
+    )
+    new_parser.add_argument("-o", "--output", type=Path, help="Destination review JSON.")
+    new_parser.add_argument("--title", help="Review title (default: input filename).")
+    new_parser.add_argument(
+        "--model",
+        default=os.environ.get("OPENAI_MODEL", "gpt-5.6-sol"),
+        help="OpenAI model (default: OPENAI_MODEL or gpt-5.6-sol).",
     )
 
     analyze_parser = commands.add_parser(
@@ -1368,6 +1392,76 @@ def run_add(
             print("Choose s, e, t, i, or c.")
 
 
+def _word_list_entries(text: str) -> list[str]:
+    entries: list[str] = []
+    for line in text.splitlines():
+        value = line.strip()
+        if not value:
+            continue
+        value = re.sub(r"^(?:[-*•]|\d+[.)])\s+", "", value).strip()
+        if value:
+            entries.append(value)
+    return entries
+
+
+def _read_word_list(input_file: Path | None) -> list[str]:
+    if input_file is not None:
+        if not input_file.is_file():
+            raise ValueError(f"Word-list file does not exist: {input_file}")
+        text = input_file.read_text(encoding="utf-8")
+    elif not sys.stdin.isatty():
+        text = sys.stdin.read()
+    else:
+        print("Paste one word or bilingual pair per line. Finish with a line containing only '.':")
+        lines: list[str] = []
+        while True:
+            line = input()
+            if line == ".":
+                break
+            lines.append(line)
+        text = "\n".join(lines)
+    entries = _word_list_entries(text)
+    if not entries:
+        raise ValueError("The word list is empty.")
+    return entries
+
+
+def _new_review_path(input_file: Path | None, profile: LanguageProfile) -> Path:
+    stem = input_file.stem if input_file is not None else "new"
+    if stem.endswith(".review"):
+        stem = stem.removesuffix(".review")
+    candidate = profile.review_root / f"{stem}.review.json"
+    counter = 2
+    while candidate.exists():
+        candidate = profile.review_root / f"{stem}-{counter}.review.json"
+        counter += 1
+    return candidate
+
+
+def run_new(
+    input_file: Path | None,
+    output: Path | None,
+    title: str | None,
+    model: str,
+    profile: LanguageProfile = DEFAULT_PROFILE,
+) -> int:
+    entries = _read_word_list(input_file)
+    destination = output or _new_review_path(input_file, profile)
+    if destination.exists():
+        raise ValueError(f"Output already exists: {destination}")
+    default_title = input_file.stem if input_file is not None else "New word list"
+    review_title = (title or default_title).strip()
+    if not review_title:
+        raise ValueError("The review title cannot be empty.")
+    print(f"Creating {len(entries)} cards with {model}...")
+    review = generate_word_list_review(entries, review_title, model, profile)
+    save_review(review, destination)
+    print(f"Created {len(entries)} unapproved cards in {destination}")
+    print(f"Review next: ankii --profile {profile.name} approve {destination}")
+    print(f"Import later: ankii --profile {profile.name} import {destination}")
+    return 0
+
+
 def _display_tone_family(family: ToneFamily) -> None:
     print(f"\nTone family: {family.base} (Southern Vietnamese)")
     print(" #  Tone     Form       Meaning / status")
@@ -2299,6 +2393,10 @@ def main() -> None:
             args.grammar_model = settings.grammar_model
         if args.command == "add":
             exit_code = run_add(args.word, args.inbox or profile.inbox_path, profile)
+        elif args.command == "new":
+            exit_code = run_new(
+                args.input_file, args.output, args.title, args.model, profile
+            )
         elif args.command == "analyze":
             exit_code = run_analyze(
                 args.text,

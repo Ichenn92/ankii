@@ -61,6 +61,7 @@ def test_dashboard_contains_every_cli_leaf_command() -> None:
         ("profile", "default"),
         ("profile", "delete"),
         ("add",),
+        ("new",),
         ("analyze",),
         ("yhw", "wizard"),
         ("tag",),

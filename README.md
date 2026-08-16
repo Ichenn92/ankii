@@ -252,6 +252,20 @@ ankii add
 ankii add "xin chào"
 ```
 
+Create a complete review JSON from a list containing studied-language words,
+native-language words, or bilingual pairs (one entry per line):
+
+```bash
+ankii new words.txt
+pbpaste | ankii new --title "Words from class"
+ankii new words.txt --output reviews/class.review.json
+```
+
+With no file or piped input, `ankii new` accepts an interactive paste ending with a line
+containing only `.`. AI fills the missing side, an example and its translation, and the four
+taxonomy tags. Cards are deliberately created unapproved; inspect them with
+`ankii approve REVIEW`, then pass the same file to `ankii import REVIEW`.
+
 Analyze a passage and choose suggested vocabulary or grammar cards:
 
 ```bash
