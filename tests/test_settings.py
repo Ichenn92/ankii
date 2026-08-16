@@ -14,6 +14,7 @@ from ankii.settings import (
     load_settings,
     profile_name_for_language,
     set_default_profile,
+    set_profile_audio,
 )
 
 
@@ -140,11 +141,35 @@ instructions = "Speak clearly."
     assert profile.audio_skip_path == tmp_path / "reviews/vietnamese/audio-skip.json"
 
 
+def test_sets_and_replaces_profile_audio_without_changing_other_profiles(tmp_path: Path) -> None:
+    path, _created = create_default_settings(tmp_path / "anki.toml")
+
+    profile = set_profile_audio(
+        path,
+        "vietnamese",
+        AudioSettings(enabled=True, voice="marin", accent="Southern Vietnamese"),
+    )
+    profile = set_profile_audio(
+        path,
+        "vietnamese",
+        AudioSettings(enabled=True, voice="cedar", accent="Saigon"),
+    )
+
+    text = path.read_text(encoding="utf-8")
+    assert text.count("[profiles.vietnamese.audio]") == 1
+    assert profile.audio == AudioSettings(enabled=True, voice="cedar", accent="Saigon")
+    assert load_settings(path).profiles["french"].study_language == "French"
+
+    settings, _review_root = delete_profile(path, "vietnamese", new_default="french")
+    assert "vietnamese" not in settings.profiles
+    assert "profiles.vietnamese.audio" not in path.read_text(encoding="utf-8")
+
+
 @pytest.mark.parametrize(
     ("audio_line", "message"),
     [
         ('enabled = "yes"', "enabled must be true or false"),
-        ('provider = "local"', "provider must be 'openai'"),
+        ('provider = "cloud"', "provider must be 'openai' or 'local'"),
         ('voice = ""', "voice must be a non-empty string"),
         ("accent = 42", "accent must be a string"),
     ],

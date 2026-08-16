@@ -115,6 +115,7 @@ class AudioSettings:
     provider: str = "openai"
     model: str = "gpt-4o-mini-tts"
     voice: str = "marin"
+    language: str = ""
     accent: str = ""
     instructions: str = ""
 
@@ -200,8 +201,10 @@ def _audio_settings(raw: dict[str, Any], context: str) -> AudioSettings | None:
     if not isinstance(enabled, bool):
         raise ValueError(f"{context}.audio.enabled must be true or false.")
     provider = value.get("provider", "openai")
-    model = value.get("model", "gpt-4o-mini-tts")
+    local_provider = isinstance(provider, str) and provider.strip().casefold() == "local"
+    model = value.get("model", "macos-say" if local_provider else "gpt-4o-mini-tts")
     voice = value.get("voice", "marin")
+    language = value.get("language", "")
     accent = value.get("accent", "")
     instructions = value.get("instructions", "")
     for key, item in {
@@ -211,16 +214,22 @@ def _audio_settings(raw: dict[str, Any], context: str) -> AudioSettings | None:
     }.items():
         if not isinstance(item, str) or not item.strip():
             raise ValueError(f"{context}.audio.{key} must be a non-empty string.")
-    for key, item in {"accent": accent, "instructions": instructions}.items():
+    for key, item in {
+        "language": language,
+        "accent": accent,
+        "instructions": instructions,
+    }.items():
         if not isinstance(item, str):
             raise ValueError(f"{context}.audio.{key} must be a string.")
-    if provider.strip().casefold() != "openai":
-        raise ValueError(f"{context}.audio.provider must be 'openai'.")
+    provider = provider.strip().casefold()
+    if provider not in {"openai", "local"}:
+        raise ValueError(f"{context}.audio.provider must be 'openai' or 'local'.")
     return AudioSettings(
         enabled=enabled,
-        provider="openai",
+        provider=provider,
         model=model.strip(),
         voice=voice.strip(),
+        language=language.strip(),
         accent=accent.strip(),
         instructions=instructions.strip(),
     )
@@ -396,6 +405,60 @@ def set_default_profile(path: Path, name: str) -> Settings:
         raise ValueError(f"Unknown profile {name!r}. Available profiles: {available}.")
     text = _replace_default_profile(path.read_text(encoding="utf-8"), name)
     return _write_validated_settings(path, text)
+
+
+def set_profile_audio(path: Path, name: str, audio: AudioSettings) -> LanguageProfile:
+    """Create or replace one profile's audio table without rewriting unrelated TOML."""
+    settings = load_settings(path)
+    name = name.strip()
+    if name not in settings.profiles:
+        available = ", ".join(sorted(settings.profiles))
+        raise ValueError(f"Unknown profile {name!r}. Available profiles: {available}.")
+
+    block = (
+        f"[profiles.{name}.audio]\n"
+        f"enabled = {'true' if audio.enabled else 'false'}\n"
+        f"provider = {_toml_string(audio.provider)}\n"
+        f"model = {_toml_string(audio.model)}\n"
+        f"voice = {_toml_string(audio.voice)}\n"
+        f"language = {_toml_string(audio.language)}\n"
+        f"accent = {_toml_string(audio.accent)}\n"
+        f"instructions = {_toml_string(audio.instructions)}\n"
+    )
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines(keepends=True)
+    header = f"[profiles.{name}.audio]"
+    start = next(
+        (index for index, line in enumerate(lines) if line.strip() == header),
+        None,
+    )
+    if start is None:
+        profile_header = f"[profiles.{name}]"
+        profile_start = next(
+            index for index, line in enumerate(lines) if line.strip() == profile_header
+        )
+        nested_prefix = f"[profiles.{name}."
+        insert_at = len(lines)
+        for index in range(profile_start + 1, len(lines)):
+            section = lines[index].strip()
+            if section.startswith("[") and not section.startswith(nested_prefix):
+                insert_at = index
+                break
+        prefix = "".join(lines[:insert_at]).rstrip()
+        suffix = "".join(lines[insert_at:]).lstrip("\n")
+        updated_text = f"{prefix}\n\n{block}"
+        if suffix:
+            updated_text += f"\n{suffix}"
+    else:
+        end = len(lines)
+        for index in range(start + 1, len(lines)):
+            if lines[index].strip().startswith("["):
+                end = index
+                break
+        replacement = block + ("\n" if end < len(lines) else "")
+        updated_text = "".join([*lines[:start], replacement, *lines[end:]]).rstrip() + "\n"
+    updated = _write_validated_settings(path, updated_text)
+    return updated.profiles[name]
 
 
 def delete_profile(

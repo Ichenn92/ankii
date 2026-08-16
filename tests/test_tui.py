@@ -1,8 +1,26 @@
+import asyncio
+import os
 from pathlib import Path
 
 from ankii import cli
 from ankii.settings import create_default_settings, set_default_profile
-from ankii.tui import ACTIONS, AnkiiApp, command_argv
+from ankii.tui import ACTIONS, AnkiiApp, CommandPane, command_argv
+
+
+def test_tui_preserves_terminal_input_method_composition() -> None:
+    assert os.environ["TEXTUAL_DISABLE_KITTY_KEY"] == "1"
+
+
+def test_dashboard_hides_command_pane_on_startup(tmp_path: Path) -> None:
+    settings_path, _created = create_default_settings(tmp_path / "anki.toml")
+    app = AnkiiApp(settings_path)
+
+    async def check_layout() -> None:
+        async with app.run_test():
+            assert app.query_one("#body").display
+            assert not app.query_one(CommandPane).display
+
+    asyncio.run(check_layout())
 
 
 def test_command_argv_preserves_settings_and_profile() -> None:
@@ -44,21 +62,20 @@ def test_dashboard_contains_every_cli_leaf_command() -> None:
         ("profile", "delete"),
         ("add",),
         ("analyze",),
-        ("yhw", "fetch"),
-        ("yhw", "review"),
         ("yhw", "wizard"),
         ("tag",),
         ("approve",),
         ("key", "set"),
         ("key", "status"),
         ("key", "delete"),
+        ("audio", "setup"),
+        ("audio", "voices"),
         ("anki", "status"),
         ("anki", "decks"),
         ("anki", "models"),
         ("anki", "fields"),
         ("anki", "setup-note-type"),
         ("anki", "setup-note-types"),
-        ("anki", "migrate-tone-families"),
         ("import",),
         ("backfill-examples",),
         ("backfill-audio",),
@@ -97,7 +114,15 @@ def test_dashboard_actions_are_grouped_by_section() -> None:
         if index == 0 or action.section != ACTIONS[index - 1].section
     ]
 
-    assert sections == ["Study", "Anki", "Profiles", "Application"]
+    assert sections == [
+        "New",
+        "Review",
+        "Import",
+        "Maintenance",
+        "Anki",
+        "Profiles",
+        "Application",
+    ]
 
 
 def test_removed_discovery_commands_are_not_in_dashboard() -> None:

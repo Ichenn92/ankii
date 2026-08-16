@@ -5,6 +5,9 @@ import html
 import json
 import os
 import re
+import shutil
+import subprocess
+import sys
 import tempfile
 import time
 from dataclasses import dataclass
@@ -19,6 +22,41 @@ from ankii.maintenance import notes_for_model
 from ankii.settings import AudioSettings, LanguageProfile
 
 AUDIO_SKIP_VERSION = 1
+AUDIO_REFERENCE_RE = re.compile(r"(?i)\[sound:[^\]]+\]")
+LANGUAGE_PREFIXES = {
+    "Arabic": "ar",
+    "Cantonese": "yue",
+    "Catalan": "ca",
+    "Czech": "cs",
+    "Danish": "da",
+    "Dutch": "nl",
+    "English": "en",
+    "Finnish": "fi",
+    "French": "fr",
+    "German": "de",
+    "Greek": "el",
+    "Hebrew": "he",
+    "Hindi": "hi",
+    "Hungarian": "hu",
+    "Indonesian": "id",
+    "Italian": "it",
+    "Japanese": "ja",
+    "Korean": "ko",
+    "Malay": "ms",
+    "Mandarin Chinese": "zh",
+    "Norwegian": "nb",
+    "Persian": "fa",
+    "Polish": "pl",
+    "Portuguese": "pt",
+    "Romanian": "ro",
+    "Russian": "ru",
+    "Spanish": "es",
+    "Swedish": "sv",
+    "Thai": "th",
+    "Turkish": "tr",
+    "Ukrainian": "uk",
+    "Vietnamese": "vi",
+}
 
 
 @dataclass(frozen=True)
@@ -45,6 +83,18 @@ class MissingAudio:
     existing_value: str
 
 
+@dataclass(frozen=True)
+class LocalVoice:
+    name: str
+    language: str
+
+
+@dataclass(frozen=True)
+class LocalSpeechClient:
+    say: str
+    ffmpeg: str
+
+
 def audio_enabled(profile: LanguageProfile) -> bool:
     return profile.audio is not None and profile.audio.enabled
 
@@ -60,6 +110,11 @@ def example_audio_lines(value: object) -> list[str]:
         for line in text.splitlines()
         if line.strip()
     ]
+
+
+def example_audio_text(value: object) -> str:
+    """Combine every displayed example line into one speech input and one clip."""
+    return "\n".join(example_audio_lines(value))
 
 
 def speech_instructions(profile: LanguageProfile) -> str:
@@ -81,6 +136,7 @@ def audio_filename(profile: LanguageProfile, text: str) -> str:
             "model": settings.model,
             "voice": settings.voice,
             "language": profile.study_language,
+            "speech_language": settings.language,
             "accent": settings.accent,
             "instructions": settings.instructions,
             "text": normalized,
@@ -94,7 +150,30 @@ def audio_filename(profile: LanguageProfile, text: str) -> str:
 
 
 def create_speech_client(profile: LanguageProfile) -> Any:
-    _enabled_settings(profile)
+    settings = _enabled_settings(profile)
+    if settings.provider == "local":
+        if sys.platform != "darwin":
+            raise RuntimeError("Local audio generation currently requires macOS.")
+        say = shutil.which("say")
+        ffmpeg = shutil.which("ffmpeg")
+        if not say or not ffmpeg:
+            raise RuntimeError(
+                "Local audio generation requires the macOS 'say' command and ffmpeg."
+            )
+        voices = local_voices()
+        selected = next((item for item in voices if item.name == settings.voice), None)
+        if selected is None:
+            raise RuntimeError(
+                f"Local voice {settings.voice!r} is not installed. Run 'ankii audio voices'."
+            )
+        if settings.language and selected.language.casefold() != settings.language.casefold():
+            raise RuntimeError(
+                f"Local voice {settings.voice!r} uses {selected.language}, not "
+                f"{settings.language}. Run 'ankii audio voices'."
+            )
+        return LocalSpeechClient(say, ffmpeg)
+    if settings.provider != "openai":
+        raise RuntimeError(f"Unsupported audio provider: {settings.provider!r}.")
     api_key, _source = get_openai_api_key()
     if not api_key:
         raise RuntimeError(
@@ -108,6 +187,37 @@ def create_speech_client(profile: LanguageProfile) -> Any:
             'Audio generation requires AI support. Run: python -m pip install -e ".[ai]"'
         ) from exc
     return OpenAI(api_key=api_key)
+
+
+def local_voices(language: str | None = None) -> list[LocalVoice]:
+    """Return installed macOS voices, optionally filtered by language or locale."""
+    if sys.platform != "darwin":
+        raise RuntimeError("Local voice discovery currently requires macOS.")
+    say = shutil.which("say")
+    if not say:
+        raise RuntimeError("The macOS 'say' command is unavailable.")
+    result = subprocess.run(
+        [say, "-v", "?"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    voices: list[LocalVoice] = []
+    for line in result.stdout.splitlines():
+        match = re.match(r"^(.*?)\s+([a-z]{2,3}_[A-Z]{2})\s+#", line)
+        if match:
+            voices.append(LocalVoice(match.group(1).strip(), match.group(2)))
+    query = (language or "").strip()
+    prefix = LANGUAGE_PREFIXES.get(query, query).casefold().replace("-", "_")
+    if prefix:
+        voices = [
+            voice
+            for voice in voices
+            if voice.language.casefold() == prefix
+            or voice.language.casefold().startswith(f"{prefix}_")
+            or prefix in voice.name.casefold()
+        ]
+    return voices
 
 
 def load_audio_skips(path: Path) -> dict[str, dict[str, Any]]:
@@ -158,8 +268,10 @@ def add_audio_skip(
     updated[candidate.filename] = {
         "text": candidate.text,
         "kind": candidate.kind,
+        "provider": settings.provider,
         "model": settings.model,
         "voice": settings.voice,
+        "language": settings.language,
         "accent": settings.accent,
         "instructions": settings.instructions,
         "skipped_at": datetime.now(UTC).isoformat(),
@@ -194,18 +306,17 @@ def missing_audio(
         note_fields = note.get("fields", {})
         word = _field_value(note_fields, field_names["target"])
         requests = [(word, "target", field_names["target_audio"])]
-        requests.extend(
-            (line, "example", field_names["example_audio"])
-            for line in example_audio_lines(
-                _field_value(note_fields, field_names["example_target"])
-            )
+        combined_example = example_audio_text(
+            _field_value(note_fields, field_names["example_target"])
         )
+        if combined_example:
+            requests.append((combined_example, "example", field_names["example_audio"]))
         for text, kind, field in requests:
             if not text:
                 continue
             filename = audio_filename(profile, text)
             existing_value = _field_raw(note_fields, field)
-            if f"[sound:{filename}]" in existing_value:
+            if AUDIO_REFERENCE_RE.search(existing_value):
                 continue
             if filename in ignored:
                 ignored_count += 1
@@ -228,14 +339,14 @@ def install_missing_audio(
     candidate: MissingAudio,
     profile: LanguageProfile,
     client: Any,
-    current_value: str,
+    _current_value: str,
 ) -> tuple[str, bool]:
     path, generated = ensure_audio_clip(profile, candidate.text, client)
     stored = invoke("storeMediaFile", filename=path.name, path=str(path.resolve()))
     if not isinstance(stored, str) or not stored:
         raise RuntimeError("AnkiConnect returned an invalid stored audio filename.")
     sound = f"[sound:{stored}]"
-    updated = f"{current_value.rstrip()} {sound}".strip()
+    updated = sound
     invoke(
         "updateNoteFields",
         note={"id": candidate.note_id, "fields": {candidate.field: updated}},
@@ -275,10 +386,9 @@ def attach_audio(
             continue
         requests = [(str(card.get("word", "")).strip(), field_names["target_audio"])]
         example_value = card.get("example_target", card.get("example_vn", ""))
-        requests.extend(
-            (line, field_names["example_audio"])
-            for line in example_audio_lines(example_value)
-        )
+        combined_example = example_audio_text(example_value)
+        if combined_example:
+            requests.append((combined_example, field_names["example_audio"]))
         media: list[dict[str, Any]] = []
         for text, field in requests:
             if not text:
@@ -340,14 +450,17 @@ def _generate_clip(
         os.close(descriptor)
         temporary = Path(temporary_name)
         try:
-            with client.audio.speech.with_streaming_response.create(
-                model=settings.model,
-                voice=settings.voice,
-                input=text,
-                instructions=speech_instructions(profile),
-                response_format="mp3",
-            ) as response:
-                response.stream_to_file(temporary)
+            if settings.provider == "local":
+                _generate_local_clip(client, settings, text, temporary)
+            else:
+                with client.audio.speech.with_streaming_response.create(
+                    model=settings.model,
+                    voice=settings.voice,
+                    input=text,
+                    instructions=speech_instructions(profile),
+                    response_format="mp3",
+                ) as response:
+                    response.stream_to_file(temporary)
             if not temporary.stat().st_size:
                 raise RuntimeError("OpenAI returned an empty audio file.")
             os.replace(temporary, destination)
@@ -361,6 +474,48 @@ def _generate_clip(
             break
     assert last_error is not None
     raise last_error
+
+
+def _generate_local_clip(
+    client: LocalSpeechClient,
+    settings: AudioSettings,
+    text: str,
+    destination: Path,
+) -> None:
+    descriptor, source_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.", suffix=".aiff", dir=destination.parent
+    )
+    os.close(descriptor)
+    source = Path(source_name)
+    try:
+        subprocess.run(
+            [client.say, "-v", settings.voice, "-o", str(source), text],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            [
+                client.ffmpeg,
+                "-nostdin",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(source),
+                "-codec:a",
+                "libmp3lame",
+                "-f",
+                "mp3",
+                str(destination),
+            ],
+            check=True,
+            capture_output=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        message = exc.stderr.decode(errors="replace").strip() if exc.stderr else str(exc)
+        raise RuntimeError(f"Local speech generation failed: {message}") from exc
+    finally:
+        source.unlink(missing_ok=True)
 
 
 def _is_transient_error(error: Exception) -> bool:

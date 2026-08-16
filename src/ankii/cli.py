@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import html
-import json
 import os
 import sys
 import unicodedata
@@ -25,6 +24,7 @@ from ankii.audio import (
     create_speech_client,
     install_missing_audio,
     load_audio_skips,
+    local_voices,
     missing_audio,
     save_audio_skips,
 )
@@ -73,16 +73,17 @@ from ankii.settings import (
     AVAILABLE_LANGUAGES,
     CEFR_LEVELS,
     DEFAULT_PROFILE,
+    AudioSettings,
     LanguageProfile,
     add_profile,
     canonical_language,
     create_default_settings,
-    data_root,
     default_settings_path,
     delete_profile,
     load_settings,
     profile_name_for_language,
     set_default_profile,
+    set_profile_audio,
 )
 from ankii.tagging import suggest_card_tags, suggest_example_sentence, tag_review
 from ankii.tone_family import (
@@ -205,28 +206,6 @@ Run 'ankii COMMAND --help' for help with a specific command.""",
     )
     yhw_commands = yhw_parser.add_subparsers(dest="yhw_command", required=True)
 
-    fetch_parser = yhw_commands.add_parser(
-        "fetch",
-        help="Download and normalize a public yourhomework.net vocabulary lesson.",
-    )
-    fetch_parser.add_argument(
-        "lesson",
-        nargs="?",
-        help="Numeric public ID or complete vocabulary URL (prompted when omitted).",
-    )
-    fetch_parser.add_argument("--output", type=Path)
-
-    review_parser = yhw_commands.add_parser(
-        "review",
-        help="Create a local review file from a yourhomework.net vocabulary lesson.",
-    )
-    review_parser.add_argument(
-        "lesson",
-        nargs="?",
-        help="Numeric public ID or complete vocabulary URL (prompted when omitted).",
-    )
-    review_parser.add_argument("--output", type=Path)
-
     tag_parser = commands.add_parser("tag", help="Add GPT tag suggestions to a review file.")
     tag_parser.add_argument(
         "review_file",
@@ -264,6 +243,29 @@ Run 'ankii COMMAND --help' for help with a specific command.""",
     key_commands.add_parser("status", help="Show whether a key is available without revealing it.")
     key_commands.add_parser("delete", help="Delete the stored API key from Keychain.")
 
+    audio_parser = commands.add_parser(
+        "audio", help="Configure text-to-speech for a language profile."
+    )
+    audio_commands = audio_parser.add_subparsers(dest="audio_command", required=True)
+    audio_setup_parser = audio_commands.add_parser(
+        "setup", help="Configure OpenAI or local speech generation in anki.toml."
+    )
+    enabled_group = audio_setup_parser.add_mutually_exclusive_group()
+    enabled_group.add_argument("--enable", dest="enabled", action="store_true")
+    enabled_group.add_argument("--disable", dest="enabled", action="store_false")
+    audio_setup_parser.set_defaults(enabled=None)
+    audio_setup_parser.add_argument("--provider", choices=("openai", "local"))
+    audio_setup_parser.add_argument("--model")
+    audio_setup_parser.add_argument("--voice")
+    audio_setup_parser.add_argument("--language")
+    audio_setup_parser.add_argument("--accent")
+    audio_setup_parser.add_argument("--instructions")
+    audio_voices_parser = audio_commands.add_parser(
+        "voices", help="List local voices installed on this device."
+    )
+    audio_voices_parser.add_argument(
+        "--language", help="Language name, code, or locale to filter (for example Vietnamese)."
+    )
     anki_parser = commands.add_parser("anki", help="Inspect the local Anki collection.")
     anki_commands = anki_parser.add_subparsers(dest="anki_command", required=True)
     anki_commands.add_parser("status", help="Check the AnkiConnect connection.")
@@ -287,14 +289,6 @@ Run 'ankii COMMAND --help' for help with a specific command.""",
     setup_models_parser.add_argument(
         "source", nargs="?", default=None, help="Existing language-specific vocabulary note type."
     )
-    migrate_tones_parser = anki_commands.add_parser(
-        "migrate-tone-families",
-        help="Embed legacy ToneFamily recaps in Vocabulary notes and remove the recaps.",
-    )
-    migrate_tones_parser.add_argument(
-        "--tone-model", default="ToneFamily", help="Legacy recap note type (default: ToneFamily)."
-    )
-
     import_parser = commands.add_parser(
         "import",
         help="Import approved cards into Anki.",
@@ -389,43 +383,6 @@ def _language_argument(value: str) -> str:
         raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
-def _resolve_lesson(lesson_value: str | None) -> str:
-    value = lesson_value or input("YourHomework lesson ID or URL: ").strip()
-    if not value:
-        raise ValueError("A lesson ID or URL is required.")
-    return value
-
-
-def run_fetch(lesson_value: str | None, output: Path | None) -> int:
-    lesson_value = _resolve_lesson(lesson_value)
-    lesson = fetch_lesson(lesson_value)
-    output_path = output or data_root() / "downloads" / f"lesson-{lesson.public_id}.json"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        json.dumps(lesson.to_dict(), ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    print(f"Lesson: {lesson.title}")
-    print(f"Words:  {len(lesson.items)}")
-    print(f"Saved:  {output_path}")
-    return 0
-
-
-def run_review(
-    lesson_value: str | None, output: Path | None, profile: LanguageProfile = DEFAULT_PROFILE
-) -> int:
-    lesson_value = _resolve_lesson(lesson_value)
-    lesson = fetch_lesson(lesson_value)
-    output_path = output or profile.review_root / f"{lesson.public_id}.review.json"
-    if output_path.exists():
-        raise ValueError(f"Review file already exists: {output_path}")
-    save_review(create_review(lesson, profile), output_path)
-    print(f"Lesson: {lesson.title}")
-    print(f"Cards:  {len(lesson.items)}")
-    print(f"Saved:  {output_path}")
-    return 0
-
-
 def _edit_card(card: dict[str, object], profile: LanguageProfile = DEFAULT_PROFILE) -> None:
     for key, label in (
         ("word", profile.study_language),
@@ -506,10 +463,12 @@ def run_anki(
             print("Update cancelled. No changes were made.")
             return 0
         result = setup_note_type(model)
+        autoplay_disabled = _disable_deck_audio_autoplay(profile.deck)
         print(f"Fields added:      {result['fields_added']}")
         print(f"Notes migrated:    {result['notes_migrated']}")
         print(f"Templates updated: {result['templates_updated']}")
         print(f"Styling updated:   {result['styling_updated']}")
+        print(f"Audio autoplay:    {'disabled' if autoplay_disabled else 'already disabled'}")
     elif command == "setup-note-type":
         models = sorted(invoke("modelNames"), key=str.casefold)
         preferred = next(
@@ -531,6 +490,7 @@ def run_anki(
         decks = invoke("deckNames")
         if profile.deck not in decks:
             invoke("createDeck", deck=profile.deck)
+        autoplay_disabled = _disable_deck_audio_autoplay(profile.deck)
         escaped_model = vocabulary_model.replace('"', '\\"')
         escaped_deck = profile.deck.replace('"', '\\"')
         note_ids = invoke(
@@ -542,12 +502,27 @@ def run_anki(
         print(f"Vocabulary notes migrated: {result['notes_migrated']}")
         print(f"Grammar model created: {result['grammar_created']}")
         print(f"Profile deck: {profile.deck}")
+        print(f"Audio autoplay: {'disabled' if autoplay_disabled else 'already disabled'}")
         print(
             "Vocabulary fields: Target, Native, Example Target, Example Native, "
             "Target Audio, Example Audio, Related Words"
         )
         print("The original source note type is left empty and can be removed in Anki.")
     return 0
+
+
+def _disable_deck_audio_autoplay(deck: str) -> bool:
+    """Disable native sound autoplay while retaining Anki's replay buttons."""
+    config = invoke("getDeckConfig", deck=deck)
+    if not isinstance(config, dict):
+        raise RuntimeError(f"Anki did not return a deck configuration for {deck!r}.")
+    if config.get("autoplay") is False:
+        return False
+    updated = dict(config)
+    updated["autoplay"] = False
+    if invoke("saveDeckConfig", config=updated) is not True:
+        raise RuntimeError(f"Anki could not disable audio autoplay for deck {deck!r}.")
+    return True
 
 
 def run_key(command: str) -> int:
@@ -596,6 +571,136 @@ def run_setup(settings_path: Path, *, skip_key: bool = False) -> int:
         print("OpenAI API key saved securely in macOS Keychain.")
     else:
         print("OpenAI API key setup skipped. Run 'ankii key set' whenever you are ready.")
+    return 0
+
+
+def _audio_setup_value(label: str, provided: str | None, default: str) -> str:
+    if provided is not None:
+        return provided.strip()
+    suffix = f" [{default}]" if default else " (optional)"
+    return input(f"{label}{suffix}: ").strip() or default
+
+
+def run_audio_setup(
+    settings_path: Path,
+    profile_name: str | None,
+    *,
+    enabled: bool | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    voice: str | None = None,
+    language: str | None = None,
+    accent: str | None = None,
+    instructions: str | None = None,
+) -> int:
+    settings = load_settings(settings_path)
+    profile = settings.select_profile(profile_name)
+    current = profile.audio or AudioSettings()
+    if enabled is None:
+        default_choice = "Y/n" if current.enabled or profile.audio is None else "y/N"
+        answer = input(
+            f"Enable AI-generated audio for profile {profile.name!r}? [{default_choice}]: "
+        ).strip().casefold()
+        enabled = current.enabled or profile.audio is None
+        if answer in {"y", "yes"}:
+            enabled = True
+        elif answer in {"n", "no"}:
+            enabled = False
+        elif answer:
+            raise ValueError("Choose yes or no when enabling audio.")
+
+    provider = _audio_setup_value(
+        "Provider (openai/local)", provider, current.provider
+    ).casefold()
+    if provider not in {"openai", "local"}:
+        raise ValueError("Audio provider must be 'openai' or 'local'.")
+
+    default_accent = current.accent
+    if profile.audio is None and profile.is_vietnamese:
+        default_accent = "Southern Vietnamese (Saigon)"
+    default_instructions = current.instructions
+    if profile.audio is None:
+        default_instructions = "Speak clearly at a natural, learner-friendly pace."
+
+    def configured_value(label: str, provided: str | None, default: str) -> str:
+        if not enabled and provided is None:
+            return default
+        return _audio_setup_value(label, provided, default)
+
+    if provider == "local":
+        requested_language = language or current.language or profile.study_language
+        installed = local_voices(requested_language)
+        if not installed:
+            raise ValueError(
+                f"No installed local voices match {requested_language!r}. "
+                "Run 'ankii audio voices' to see all voices."
+        )
+        if voice is None:
+            choices = [f"{item.name} ({item.language})" for item in installed]
+            preferred = next(
+                (choice for choice in choices if choice.startswith(f"{current.voice} (")),
+                None,
+            )
+            selected = _choose("local voice", choices, preferred=preferred)
+            selected_voice = installed[choices.index(selected)]
+            voice = selected_voice.name
+            language = selected_voice.language
+        else:
+            selected_voice = next((item for item in installed if item.name == voice), None)
+            if selected_voice is None:
+                raise ValueError(
+                    f"Local voice {voice!r} is not installed for {requested_language!r}."
+                )
+            language = language or selected_voice.language
+        configured = AudioSettings(
+            enabled=enabled,
+            provider="local",
+            model="macos-say",
+            voice=voice,
+            language=language,
+            accent="",
+            instructions="",
+        )
+    else:
+        openai_defaults = current if current.provider == "openai" else AudioSettings()
+        configured = AudioSettings(
+            enabled=enabled,
+            provider="openai",
+            model=configured_value("Speech model", model, openai_defaults.model),
+            voice=configured_value("Voice", voice, openai_defaults.voice),
+            language="",
+            accent=configured_value("Accent preference", accent, default_accent),
+            instructions=configured_value(
+                "Additional instructions", instructions, default_instructions
+            ),
+        )
+    updated = set_profile_audio(settings_path, profile.name, configured)
+    state = "enabled" if updated.audio and updated.audio.enabled else "disabled"
+    print(f"Audio generation {state} for profile {profile.name!r}.")
+    print(f"Updated: {settings_path}")
+    if updated.audio and updated.audio.enabled:
+        if updated.audio.provider == "openai":
+            print(
+                "Voice disclosure: generated clips use an AI-generated voice. Listen to verify "
+                "the requested accent before relying on it for study."
+            )
+        else:
+            print(
+                f"Local voice: {updated.audio.voice} ({updated.audio.language}). "
+                "Audio will be generated on this Mac."
+            )
+        print("Run 'ankii anki setup-note-types' before importing audio.")
+    return 0
+
+
+def run_audio_voices(language: str | None = None) -> int:
+    voices = local_voices(language)
+    if not voices:
+        print(f"No installed local voices match {language!r}.")
+        return 1
+    print("Installed local voices:")
+    for item in voices:
+        print(f"  {item.name} ({item.language})")
     return 0
 
 
@@ -818,7 +923,7 @@ def _resolve_import_destination(
         if not review_files:
             raise ValueError(
                 "No review files were found. Create one with 'ankii add' or "
-                "'ankii yhw review LESSON'."
+                "'ankii yhw wizard LESSON'."
             )
         selected = _choose("review file", [str(path) for path in review_files])
         args.review_file = Path(selected)
@@ -2126,6 +2231,23 @@ def main() -> None:
             raise SystemExit(run_key(args.key_command))
         if args.command == "profile":
             raise SystemExit(run_profile(args, args.settings))
+        if args.command == "audio":
+            if args.audio_command == "voices":
+                raise SystemExit(run_audio_voices(args.language))
+            if args.audio_command == "setup":
+                raise SystemExit(
+                    run_audio_setup(
+                        args.settings,
+                        args.profile,
+                        enabled=args.enabled,
+                        provider=args.provider,
+                        model=args.model,
+                        voice=args.voice,
+                        language=args.language,
+                        accent=args.accent,
+                        instructions=args.instructions,
+                    )
+                )
         settings = load_settings(args.settings)
         profile = settings.select_profile(args.profile)
         if getattr(args, "deck", None) is not None:
@@ -2160,10 +2282,6 @@ def main() -> None:
                 settings.vocabulary_model,
                 settings.grammar_model,
             )
-        elif args.command == "yhw" and args.yhw_command == "fetch":
-            exit_code = run_fetch(args.lesson, args.output)
-        elif args.command == "yhw" and args.yhw_command == "review":
-            exit_code = run_review(args.lesson, args.output, profile)
         elif args.command == "tag":
             review_file = _resolve_review_file(args.review_file, profile)
             count = tag_review(review_file, args.model, profile)
@@ -2176,17 +2294,14 @@ def main() -> None:
                 args.lesson, profile, settings.vocabulary_model, settings.grammar_model
             )
         elif args.command == "anki":
-            if args.anki_command == "migrate-tone-families":
-                exit_code = run_tone_migration(settings.vocabulary_model, args.tone_model)
-            else:
-                selected_model = getattr(args, "model", None) or getattr(args, "source", None)
-                exit_code = run_anki(
-                    args.anki_command,
-                    selected_model,
-                    profile,
-                    settings.vocabulary_model,
-                    settings.grammar_model,
-                )
+            selected_model = getattr(args, "model", None) or getattr(args, "source", None)
+            exit_code = run_anki(
+                args.anki_command,
+                selected_model,
+                profile,
+                settings.vocabulary_model,
+                settings.grammar_model,
+            )
         elif args.command == "import":
             exit_code = run_import(args, profile)
         elif args.command == "backfill-examples":

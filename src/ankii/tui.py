@@ -13,6 +13,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
+# Textual's enhanced Kitty keyboard protocol reports physical key presses in
+# supporting terminals. That prevents macOS input methods (including Vietnamese
+# Telex) from composing text before it reaches the Input widget. Users who need
+# the enhanced protocol can explicitly restore it with
+# TEXTUAL_DISABLE_KITTY_KEY=0.
+os.environ.setdefault("TEXTUAL_DISABLE_KITTY_KEY", "1")
+
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -41,7 +48,7 @@ class TuiAction:
     description: str
     needs_settings: bool = True
     vietnamese_only: bool = False
-    section: str = "Study"
+    section: str = "New"
 
 
 ACTIONS: tuple[TuiAction, ...] = (
@@ -54,27 +61,6 @@ ACTIONS: tuple[TuiAction, ...] = (
         "Analyze a passage and choose vocabulary or grammar cards.",
     ),
     TuiAction(
-        "import",
-        "i",
-        "Import approved cards",
-        ("import",),
-        "Choose a review, preview duplicates, and import it into Anki.",
-    ),
-    TuiAction(
-        "approve",
-        "r",
-        "Review and approve",
-        ("approve",),
-        "Open an existing review and approve or edit its cards.",
-    ),
-    TuiAction(
-        "tag",
-        "t",
-        "Tag a review",
-        ("tag",),
-        "Choose a review and add AI-generated taxonomy tags.",
-    ),
-    TuiAction(
         "wizard",
         "w",
         "YourHomework wizard",
@@ -83,41 +69,28 @@ ACTIONS: tuple[TuiAction, ...] = (
         vietnamese_only=True,
     ),
     TuiAction(
-        "yhw-fetch",
-        "f",
-        "Download YourHomework lesson",
-        ("yhw", "fetch"),
-        "Download and normalize a public YourHomework vocabulary lesson.",
-        vietnamese_only=True,
+        "tag",
+        "t",
+        "Tag a review",
+        ("tag",),
+        "Choose a review and add AI-generated taxonomy tags.",
+        section="Review",
     ),
     TuiAction(
-        "yhw-review",
-        "y",
-        "Create YourHomework review",
-        ("yhw", "review"),
-        "Create a local review file from a public YourHomework lesson.",
-        vietnamese_only=True,
+        "approve",
+        "r",
+        "Review and approve",
+        ("approve",),
+        "Open an existing review and approve or edit its cards.",
+        section="Review",
     ),
     TuiAction(
-        "backfill-examples",
-        "b",
-        "Backfill examples",
-        ("backfill-examples",),
-        "Fill empty example fields on existing Vocabulary notes from a review.",
-    ),
-    TuiAction(
-        "backfill-audio",
-        "e",
-        "Generate missing audio",
-        ("backfill-audio",),
-        "Review missing Vocabulary audio and generate selected clips.",
-    ),
-    TuiAction(
-        "retag",
-        "g",
-        "Retag Vocabulary notes",
-        ("retag", "--all"),
-        "Preview and recalculate taxonomy tags on Vocabulary notes.",
+        "import",
+        "i",
+        "Import approved cards",
+        ("import",),
+        "Choose a review, preview duplicates, and import it into Anki.",
+        section="Import",
     ),
     TuiAction(
         "reimport",
@@ -125,6 +98,31 @@ ACTIONS: tuple[TuiAction, ...] = (
         "Reimport local reviews",
         ("reimport", "--all"),
         "Preview and update existing Anki notes from local review files.",
+        section="Import",
+    ),
+    TuiAction(
+        "backfill-examples",
+        "b",
+        "Backfill examples",
+        ("backfill-examples",),
+        "Fill empty example fields on existing Vocabulary notes from a review.",
+        section="Maintenance",
+    ),
+    TuiAction(
+        "backfill-audio",
+        "e",
+        "Generate missing audio",
+        ("backfill-audio",),
+        "Review missing Vocabulary audio and generate selected clips.",
+        section="Maintenance",
+    ),
+    TuiAction(
+        "retag",
+        "g",
+        "Retag Vocabulary notes",
+        ("retag", "--all"),
+        "Preview and recalculate taxonomy tags on Vocabulary notes.",
+        section="Maintenance",
     ),
     TuiAction(
         "connection",
@@ -175,14 +173,6 @@ ACTIONS: tuple[TuiAction, ...] = (
         section="Anki",
     ),
     TuiAction(
-        "migrate-tone-families",
-        "3",
-        "Migrate legacy tone families",
-        ("anki", "migrate-tone-families"),
-        "Embed legacy recap data in Vocabulary notes and remove recap notes.",
-        section="Anki",
-    ),
-    TuiAction(
         "profile-languages",
         "4",
         "List supported languages",
@@ -221,6 +211,23 @@ ACTIONS: tuple[TuiAction, ...] = (
         "Delete a profile",
         ("profile", "delete"),
         "Remove a profile configuration while preserving its review files.",
+        section="Profiles",
+    ),
+    TuiAction(
+        "audio-setup",
+        "7",
+        "Set up audio generation",
+        ("audio", "setup"),
+        "Choose OpenAI or a local device voice for this profile.",
+        section="Profiles",
+    ),
+    TuiAction(
+        "audio-voices",
+        "8",
+        "List local audio voices",
+        ("audio", "voices"),
+        "List speech voices and language locales installed on this device.",
+        needs_settings=False,
         section="Profiles",
     ),
     TuiAction(
@@ -332,8 +339,8 @@ def _inbox_counts(profile: LanguageProfile) -> tuple[int, int]:
 class CommandPane(Vertical):
     """Run an existing interactive CLI command inside the Textual application."""
 
-    CSS = """
-    #command-pane {
+    DEFAULT_CSS = """
+    CommandPane {
         height: 1fr;
         display: none;
         background: #111418;
@@ -393,6 +400,7 @@ class CommandPane(Vertical):
 
     def __init__(self) -> None:
         super().__init__(id="command-pane")
+        self.display = False
         self.command_title = ""
         self.argv: list[str] = []
         self.process: subprocess.Popen[bytes] | None = None

@@ -1,11 +1,16 @@
 from unittest.mock import call, patch
 
 from ankii.note_type import (
+    EXAMPLE_CSS,
+    EXAMPLE_TEMPLATE,
     GRAMMAR_BACK,
     GRAMMAR_CSS,
     GRAMMAR_FIELDS,
+    TARGET_AUDIO_TEMPLATE,
     _close_unbalanced_css_blocks,
     _migrate_generic_fields,
+    _place_example_audio,
+    _place_target_audio,
     setup_learning_models,
     setup_note_type,
 )
@@ -135,7 +140,15 @@ def test_setup_learning_models_clones_migrates_and_creates_grammar(invoke) -> No
         "Example Audio",
         "Related Words",
     ]
-    assert "{{Target Audio}}" in vocabulary_call.kwargs["cardTemplates"][0]["Front"]
+    target_template = next(
+        side
+        for side in (
+            vocabulary_call.kwargs["cardTemplates"][0]["Front"],
+            vocabulary_call.kwargs["cardTemplates"][0]["Back"],
+        )
+        if "{{Target}}" in side
+    )
+    assert target_template.index("{{Target}}") < target_template.index("{{Target Audio}}")
     assert "{{Example Audio}}" in vocabulary_call.kwargs["cardTemplates"][0]["Back"]
     assert "everyday examples" not in vocabulary_call.kwargs["cardTemplates"][0]["Back"]
     assert vocabulary_call.kwargs["cardTemplates"][0]["Back"].count(
@@ -145,7 +158,7 @@ def test_setup_learning_models_clones_migrates_and_creates_grammar(invoke) -> No
     assert "{{Example Target}}" in vocabulary_call.kwargs["cardTemplates"][0]["Back"]
     assert "<summary>Related words</summary>" in vocabulary_call.kwargs["cardTemplates"][0]["Back"]
     assert "ankii related-words" in vocabulary_call.kwargs["css"]
-    assert "ankii examples" not in vocabulary_call.kwargs["css"]
+    assert "ankii examples" in vocabulary_call.kwargs["css"]
 
 
 @patch("ankii.note_type.invoke")
@@ -302,10 +315,40 @@ def test_source_card_supports_service_icons_and_generic_open_link() -> None:
 
 
 def test_vocabulary_examples_have_multiline_dividers() -> None:
-    from ankii.note_type import EXAMPLE_CSS
-
     assert ".yhw-example-vn br, .yhw-example-en br" in EXAMPLE_CSS
     assert "border-top: 1px solid rgba(127, 127, 127, 0.28)" in EXAMPLE_CSS
+
+
+def test_vocabulary_audio_buttons_are_positioned_with_their_content() -> None:
+    rendered = _place_target_audio('<div class="word">{{Target}}</div>')
+
+    assert rendered.index("{{Target}}") < rendered.index("{{Target Audio}}")
+    assert '<span class="yhw-target-audio">' in TARGET_AUDIO_TEMPLATE
+    assert '<div class="yhw-example-target-row">' in EXAMPLE_TEMPLATE
+    assert "{{Example Audio}}" in EXAMPLE_TEMPLATE
+    assert EXAMPLE_TEMPLATE.index("yhw-example-target-row") < EXAMPLE_TEMPLATE.index(
+        "{{Example Audio}}"
+    )
+    assert "display: inline-flex" in EXAMPLE_CSS
+
+
+def test_target_audio_placement_is_idempotent_and_preserves_target() -> None:
+    once = _place_target_audio("{{Target}}")
+
+    assert _place_target_audio(once) == once
+    assert once.count("{{Target}}") == 1
+    assert once.count("{{Target Audio}}") == 1
+
+
+def test_existing_example_box_gets_inline_audio_button_idempotently() -> None:
+    template = '<div class="example-alert">{{Example Target}}</div>'
+
+    once = _place_example_audio(template)
+
+    assert '<div class="example-alert">' in once
+    assert once.index("{{Example Target}}") < once.index("{{Example Audio}}")
+    assert _place_example_audio(once) == once
+    assert once.count("{{Example Audio}}") == 1
 
 
 @patch("ankii.note_type.invoke")

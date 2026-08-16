@@ -35,6 +35,10 @@ SOURCE_MARKERS = ("<!-- ankii source -->", "<!-- /ankii source -->")
 EXAMPLE_CSS_MARKERS = ("/* ankii examples */", "/* /ankii examples */")
 SOURCE_CSS_MARKERS = ("/* ankii source */", "/* /ankii source */")
 TARGET_AUDIO_MARKERS = ("<!-- ankii target audio -->", "<!-- /ankii target audio -->")
+INLINE_EXAMPLE_AUDIO_MARKERS = (
+    "<!-- ankii inline example audio -->",
+    "<!-- /ankii inline example audio -->",
+)
 LEGACY_EXAMPLE_MARKERS = (
     "<!-- yhw2anki examples -->",
     "<!-- /yhw2anki examples -->",
@@ -52,16 +56,22 @@ LEGACY_SOURCE_CSS_MARKERS = (
 EXAMPLE_TEMPLATE = """<!-- ankii examples -->
 {{#Example Target}}
 <div class="yhw-example">
-  <div class="yhw-example-vn">{{Example Target}}</div>
-  {{#Example Audio}}<div class="yhw-example-audio">{{Example Audio}}</div>{{/Example Audio}}
+  <div class="yhw-example-target-row">
+    <div class="yhw-example-vn">{{Example Target}}</div>
+    {{#Example Audio}}<div class="yhw-example-audio">{{Example Audio}}</div>{{/Example Audio}}
+  </div>
   {{#Example Native}}<div class="yhw-example-en">{{Example Native}}</div>{{/Example Native}}
 </div>
 {{/Example Target}}
 <!-- /ankii examples -->"""
 
 TARGET_AUDIO_TEMPLATE = """<!-- ankii target audio -->
-{{#Target Audio}}<div class="yhw-target-audio">{{Target Audio}}</div>{{/Target Audio}}
+{{#Target Audio}}<span class="yhw-target-audio">{{Target Audio}}</span>{{/Target Audio}}
 <!-- /ankii target audio -->"""
+
+INLINE_EXAMPLE_AUDIO_TEMPLATE = """<!-- ankii inline example audio -->
+{{#Example Audio}}<span class="yhw-example-audio">{{Example Audio}}</span>{{/Example Audio}}
+<!-- /ankii inline example audio -->"""
 
 SOURCE_TEMPLATE = r"""<!-- ankii source -->
 {{#Source}}
@@ -198,10 +208,20 @@ SOURCE_CSS = """/* ankii source */
 EXAMPLE_CSS = """/* ankii examples */
 .yhw-example {
   margin-top: 18px;
-  padding-top: 14px;
-  border-top: 1px solid rgba(127, 127, 127, 0.35);
+  padding: 14px 16px;
+  border: 1px solid rgba(127, 127, 127, 0.35);
+  border-radius: 10px;
+  background: rgba(127, 127, 127, 0.06);
+  text-align: left;
+}
+.yhw-example-target-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
 }
 .yhw-example-vn {
+  flex: 1;
+  min-width: 0;
   font-size: 1.2em;
   line-height: 1.5;
 }
@@ -211,7 +231,20 @@ EXAMPLE_CSS = """/* ankii examples */
   margin: 10px 0;
   border-top: 1px solid rgba(127, 127, 127, 0.28);
 }
-.yhw-target-audio, .yhw-example-audio { margin-top: 8px; }
+.yhw-target-audio {
+  display: inline-flex;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+.yhw-example-audio { flex: 0 0 auto; }
+.yhw-target-audio .replay-button, .yhw-example-audio .replay-button {
+  display: inline-flex;
+  vertical-align: middle;
+}
+.yhw-target-audio .replay-button svg, .yhw-example-audio .replay-button svg {
+  width: 22px;
+  height: 22px;
+}
 .yhw-example-en {
   margin-top: 6px;
   color: #777;
@@ -220,6 +253,7 @@ EXAMPLE_CSS = """/* ankii examples */
   line-height: 1.4;
 }
 .nightMode .yhw-example-en { color: #aaa; }
+.nightMode .yhw-example { background: rgba(255, 255, 255, 0.05); }
 /* /ankii examples */
 """ + SOURCE_CSS
 
@@ -320,6 +354,31 @@ def _append_examples_if_missing(value: str, fields: tuple[str, ...], addition: s
     if any(f"{{{{{field}}}}}" in value for field in fields):
         return value
     return _append_once(value, EXAMPLE_MARKERS[0], addition)
+
+
+def _place_target_audio(value: str) -> str:
+    """Place the managed replay button immediately after the rendered target field."""
+    value = _remove_marked_block(value, *TARGET_AUDIO_MARKERS).rstrip()
+    if "{{Target}}" not in value:
+        return value
+    return value.replace("{{Target}}", f"{{{{Target}}}}\n{TARGET_AUDIO_TEMPLATE}", 1)
+
+
+def _place_example_audio(value: str) -> str:
+    """Keep the replay control beside an existing example target field."""
+    if all(marker in value for marker in INLINE_EXAMPLE_AUDIO_MARKERS):
+        return value
+    value = _remove_marked_block(value, *INLINE_EXAMPLE_AUDIO_MARKERS).rstrip()
+    if "{{Example Audio}}" in value:
+        return value
+    target_field = next(
+        (field for field in ("Example Target", "Example VN") if f"{{{{{field}}}}}" in value),
+        None,
+    )
+    if target_field is None:
+        return value
+    reference = f"{{{{{target_field}}}}}"
+    return value.replace(reference, f"{reference}\n{INLINE_EXAMPLE_AUDIO_TEMPLATE}", 1)
 
 
 def _remove_marked_block(value: str, start: str, end: str) -> str:
@@ -433,18 +492,17 @@ def setup_learning_models(
             back = _append_examples_if_missing(
                 clean_template(value["Back"]), SOURCE_EXAMPLE_FIELDS, EXAMPLE_TEMPLATE
             )
+            back = _place_example_audio(back)
             if "Source" in fields:
                 back = _append_once(back, "<!-- ankii source -->", SOURCE_TEMPLATE)
             back = _append_once(back, RELATED_WORDS_START, RELATED_WORDS_TEMPLATE)
-            front = _append_once(
-                clean_template(value["Front"]), TARGET_AUDIO_MARKERS[0], TARGET_AUDIO_TEMPLATE
-            )
+            front = _place_target_audio(clean_template(value["Front"]))
+            back = _place_target_audio(back)
             cards.append({"Name": name, "Front": front, "Back": back})
         vocabulary_css = clean_css(str(styling.get("css", "")))
-        if "Source" in fields:
-            vocabulary_css = _append_once(
-                vocabulary_css, SOURCE_CSS_MARKERS[0], SOURCE_CSS
-            )
+        vocabulary_css = _append_once(
+            vocabulary_css, EXAMPLE_CSS_MARKERS[0], EXAMPLE_CSS
+        )
         vocabulary_css = _append_once(
             vocabulary_css,
             RELATED_WORDS_CSS_START,
@@ -475,12 +533,11 @@ def setup_learning_models(
             cleaned = dict(template)
             for side in ("Front", "Back"):
                 cleaned[side] = clean_template(cleaned[side])
-            cleaned["Front"] = _append_once(
-                cleaned["Front"], TARGET_AUDIO_MARKERS[0], TARGET_AUDIO_TEMPLATE
-            )
+            cleaned["Front"] = _place_target_audio(cleaned["Front"])
             cleaned["Back"] = _append_examples_if_missing(
                 cleaned["Back"], SOURCE_EXAMPLE_FIELDS, EXAMPLE_TEMPLATE
             )
+            cleaned["Back"] = _place_example_audio(cleaned["Back"])
             if "Source" in vocabulary_fields:
                 cleaned["Back"] = _append_once(
                     cleaned["Back"], "<!-- ankii source -->", SOURCE_TEMPLATE
@@ -488,6 +545,7 @@ def setup_learning_models(
             cleaned["Back"] = _append_once(
                 cleaned["Back"], RELATED_WORDS_START, RELATED_WORDS_TEMPLATE
             )
+            cleaned["Back"] = _place_target_audio(cleaned["Back"])
             cleaned_templates[name] = cleaned
         if cleaned_templates != templates:
             invoke(
@@ -497,8 +555,7 @@ def setup_learning_models(
         styling = invoke("modelStyling", modelName=vocabulary_model)
         css = str(styling.get("css", ""))
         cleaned_css = clean_css(css)
-        if "Source" in vocabulary_fields:
-            cleaned_css = _append_once(cleaned_css, SOURCE_CSS_MARKERS[0], SOURCE_CSS)
+        cleaned_css = _append_once(cleaned_css, EXAMPLE_CSS_MARKERS[0], EXAMPLE_CSS)
         cleaned_css = _append_once(
             cleaned_css, RELATED_WORDS_CSS_START, RELATED_WORDS_CSS
         )
@@ -689,16 +746,15 @@ def setup_note_type(model: str) -> dict[str, int]:
     changed_templates: dict[str, dict[str, str]] = {}
     for name, template in templates.items():
         updated = dict(template)
-        front = _remove_marked_block(template["Front"], *TARGET_AUDIO_MARKERS)
-        updated["Front"] = _append_once(
-            front, TARGET_AUDIO_MARKERS[0], TARGET_AUDIO_TEMPLATE
-        )
+        updated["Front"] = _place_target_audio(template["Front"])
         back = template["Back"]
         for markers in (LEGACY_EXAMPLE_MARKERS, EXAMPLE_MARKERS):
             back = _remove_marked_block(back, *markers)
         updated["Back"] = _append_examples_if_missing(
             back, LEGACY_EXAMPLE_FIELDS, EXAMPLE_TEMPLATE
         )
+        updated["Back"] = _place_example_audio(updated["Back"])
+        updated["Back"] = _place_target_audio(updated["Back"])
         if "Source" in original_fields:
             for markers in (LEGACY_SOURCE_MARKERS, SOURCE_MARKERS):
                 updated["Back"] = _remove_marked_block(updated["Back"], *markers)

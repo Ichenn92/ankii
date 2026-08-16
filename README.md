@@ -129,8 +129,16 @@ analysis_min_level = "A1"
 analysis_max_level = "B2"
 ```
 
-Audio is opt-in per profile. This example generates a separate MP3 for the target word and
-each target-language example line during import:
+Audio is opt-in per profile. This example generates one MP3 for the target word and one MP3
+containing all target-language example lines during import:
+
+```bash
+ankii audio setup
+```
+
+The guided command updates the active profile in `anki.toml` and prompts for the speech model,
+voice, accent preference, and additional instructions. The same values can be supplied with
+`--enable`, `--model`, `--voice`, `--accent`, and `--instructions` for scripting.
 
 ```toml
 [profiles.vietnamese.audio]
@@ -138,9 +146,23 @@ enabled = true
 provider = "openai"
 model = "gpt-4o-mini-tts"
 voice = "marin"
+language = ""
 accent = "Southern Vietnamese (Saigon)"
 instructions = "Speak clearly at a natural, learner-friendly pace."
 ```
+
+To generate audio offline with a voice installed on this Mac, list the available voices and
+then run setup:
+
+```bash
+ankii audio voices --language Vietnamese
+ankii audio setup --enable --provider local
+```
+
+Local setup stores `provider = "local"`, `model = "macos-say"`, the selected voice, and its
+locale (for example `language = "vi_VN"`) in the profile's audio table. Generation uses the
+macOS `say` command and local `ffmpeg`; no study text is sent to OpenAI. Clips use the same
+deterministic MP3 cache and Anki fields as OpenAI-generated audio.
 
 Run `ankii anki setup-note-types` after enabling audio so Vocabulary has `Target Audio` and
 `Example Audio` fields. Audio generation begins only after the `IMPORT` confirmation and only
@@ -149,17 +171,24 @@ directory; changing the text, model, voice, accent, or instructions creates a ne
 OpenAI API charges apply. The voices are AI-generated and built-in voices are optimized for
 English, so verify regional pronunciation such as Southern Vietnamese by listening.
 
+Note-type setup also disables automatic audio playback for the active profile's deck while
+retaining Anki's replay controls. The target control is displayed beside the target text, and
+example controls are displayed inside the example box. Run setup again to migrate existing
+Vocabulary templates to this layout.
+
 To add audio to Vocabulary notes that already exist in Anki, run:
 
 ```bash
 ankii backfill-audio
 ```
 
-The command finds missing target-word and example clips in the active profile's deck and asks
-for each one: `y` generates or reuses the cached clip, while `n` permanently suppresses that
-clip. Declines are saved in the profile's `audio-skip.json`, so later runs do not ask again.
-The skip identity includes the text and current model, voice, accent, and instructions; changing
-the speech configuration makes the new rendition eligible for review.
+The command finds missing target-word and combined-example clips in the active profile's deck
+and asks for each one: `y` generates or reuses the cached clip, while `n` permanently suppresses
+that clip. Each audio field contains at most one sound reference. Any existing sound counts as
+complete even if the provider, model, language, voice, accent, or instructions later change.
+Declines are saved in the profile's `audio-skip.json`, so later runs do not ask again. For an
+empty field, changing the speech configuration makes a previously declined rendition eligible
+for review again.
 
 Select a profile for one command or a shell session:
 
@@ -231,32 +260,10 @@ workflow:
 ankii yhw wizard 313789981
 ```
 
-You can supply a complete YourHomework URL or omit the ID to be prompted. Individual
-steps are also available:
-
-```bash
-ankii yhw fetch 313789981
-ankii yhw review 313789981
-ankii tag /path/to/313789981.review.json
-ankii approve
-ankii import
-```
-
-`yhw fetch` stores raw downloads under the private data directory by default. Review
-and wizard commands store review JSON under the active profile. Explicit `--output`,
-`--inbox`, `--reviews`, and review-file arguments remain available.
-
-For recap cards created by older versions, update the managed note types and run the
-explicit migration:
-
-```bash
-ankii anki setup-note-types Vietnamese
-ankii anki migrate-tone-families
-```
-
-Migration requires the exact confirmation `MIGRATE`, updates every matched Vocabulary note,
-deletes the migrated recap notes, and removes the old `Tone Family` field. Then delete the
-now-empty `ToneFamily` note type manually from **Tools → Manage Note Types** in Anki.
+You can supply a complete YourHomework URL or omit the ID to be prompted. The wizard
+stores review JSON under the active profile and resumes an existing review when run again.
+Explicit `--inbox`, `--reviews`, and review-file arguments remain available to the
+general review commands.
 
 Inspect Anki and set up the shared note types:
 

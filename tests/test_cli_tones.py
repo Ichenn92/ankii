@@ -277,10 +277,3 @@ def test_migrate_tone_families_preflight_failure_makes_no_changes(monkeypatch) -
     assert cli.run_tone_migration("Vocabulary") == 1
     assert "updateNoteFields" not in actions
     assert "deleteNotes" not in actions
-
-
-def test_migrate_tone_families_command_defaults_to_legacy_model() -> None:
-    args = cli.build_parser().parse_args(["anki", "migrate-tone-families"])
-
-    assert args.anki_command == "migrate-tone-families"
-    assert args.tone_model == "ToneFamily"

@@ -17,6 +17,7 @@ enabled = true
 provider = "openai"
 model = "gpt-4o-mini-tts"
 voice = "marin"
+language = ""
 accent = "Southern Vietnamese (Saigon)"
 instructions = "Speak clearly at a natural, learner-friendly pace."
 
