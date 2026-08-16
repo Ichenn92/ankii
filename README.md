@@ -313,21 +313,90 @@ pytest
 ruff check .
 ```
 
-To publish an update, first bump the version in `pyproject.toml` and
-`src/ankii/__init__.py`. Keep `main` release-ready because user installations track
-that branch, then test, commit, tag, and push the release:
+### Manual release
 
-```bash
-pytest
-ruff check .
-git commit -m "Release 0.1.1"
-git tag -a v0.1.1 -m "Release 0.1.1"
-git push origin main
-git push origin v0.1.1
-```
+Choose the smallest appropriate [Semantic Versioning](https://semver.org/) increment: a
+patch for a compatible fix, a minor version for a backward-compatible feature, and a major
+version for a breaking change. Before `1.0.0`, use a minor version for breaking pre-stable
+changes. The example below releases `0.2.0`; substitute the intended version throughout.
 
-Before the commit, review the complete diff and stage only the files intended for the release.
-The repository-local `ankii-release` skill contains the complete release checklist.
+1. Start from `main`, inspect the worktree, and fetch the latest branch and tags:
+
+   ```bash
+   git switch main
+   git status --short
+   git diff
+   git fetch origin main --tags
+   git merge --ff-only origin/main
+   git tag --list v0.2.0
+   git ls-remote --exit-code --tags origin refs/tags/v0.2.0
+   ```
+
+   The final two commands must not find an existing `v0.2.0` tag. `git ls-remote` exits with
+   status 2 when the remote tag is absent, which is expected here. Stop if the worktree
+   contains unrelated changes or `main` cannot be fast-forwarded.
+
+2. Set `project.version` in `pyproject.toml` and `__version__` in
+   `src/ankii/__init__.py` to the same version. Update the README as needed when commands,
+   configuration, installation, or behavior changed.
+
+3. Run the source checks from the repository root:
+
+   ```bash
+   PYTHONPATH=src .venv/bin/python -m pytest -q
+   .venv/bin/ruff check .
+   git diff --check
+   ```
+
+4. Build and smoke-test the distributable package, not only the source checkout. Install
+   `build` first if it is not already available (`.venv/bin/python -m pip install build`).
+
+   ```bash
+   .venv/bin/python -m build
+   ANKII_SMOKE_DIR="$(mktemp -d)"
+   python3 -m venv "$ANKII_SMOKE_DIR"
+   "$ANKII_SMOKE_DIR/bin/python" -m pip install dist/ankii-0.2.0-py3-none-any.whl
+   "$ANKII_SMOKE_DIR/bin/ankii" --help
+   rm -rf "$ANKII_SMOKE_DIR"
+   ```
+
+5. Review the complete diff, stage only release files, and create the release commit:
+
+   ```bash
+   git status --short
+   git diff
+   git add pyproject.toml src/ankii/__init__.py
+   git diff --cached
+   git commit -m "Release 0.2.0"
+   ```
+
+   Add any other files that intentionally belong to the release, but never stage local
+   configuration, credentials, review data, or unrelated changes.
+
+6. Confirm the commit is on `main`, create an annotated tag on that exact commit, and verify
+   it:
+
+   ```bash
+   git branch --show-current
+   git merge-base --is-ancestor origin/main HEAD
+   git tag -a v0.2.0 -m "Release 0.2.0"
+   git rev-parse HEAD
+   git rev-list -n 1 v0.2.0
+   git status --short
+   ```
+
+   The two commit hashes must match, and no release changes should remain unstaged.
+
+7. Publish `main` first, followed by only the new tag:
+
+   ```bash
+   git push origin main
+   git push origin v0.2.0
+   ```
+
+   Do not use `git push --tags`. Creating a GitHub release or publishing to a package index is
+   separate and should only be done intentionally. The repository-local `ankii-release` skill
+   follows this same checklist automatically.
 
 The installed command is `ankii`, matching the project and avoiding conflicts with Anki's
 own executable on systems where it is available on `PATH`.
