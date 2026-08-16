@@ -60,12 +60,15 @@ from ankii.review import (
     validate_review_profile,
 )
 from ankii.settings import (
+    CEFR_LEVELS,
     DEFAULT_PROFILE,
     LanguageProfile,
+    add_profile,
     create_default_settings,
     data_root,
     default_settings_path,
     load_settings,
+    set_default_profile,
 )
 from ankii.tagging import suggest_card_tags, suggest_example_sentence, tag_review
 from ankii.tone_family import (
@@ -114,6 +117,25 @@ Run 'ankii COMMAND --help' for help with a specific command.""",
         action="store_true",
         help="Create local files without prompting to store an OpenAI API key.",
     )
+
+    profile_parser = commands.add_parser("profile", help="Create and configure study profiles.")
+    profile_commands = profile_parser.add_subparsers(dest="profile_command", required=True)
+    create_profile_parser = profile_commands.add_parser(
+        "create", help="Create a new language profile."
+    )
+    create_profile_parser.add_argument("name", nargs="?", help="Lowercase profile name.")
+    create_profile_parser.add_argument("--study-language")
+    create_profile_parser.add_argument("--native-language")
+    create_profile_parser.add_argument("--deck")
+    create_profile_parser.add_argument("--min-level", choices=CEFR_LEVELS)
+    create_profile_parser.add_argument("--max-level", choices=CEFR_LEVELS)
+    create_profile_parser.add_argument(
+        "--default", action="store_true", help="Also make the new profile the default."
+    )
+    default_profile_parser = profile_commands.add_parser(
+        "default", help="Set the default language profile."
+    )
+    default_profile_parser.add_argument("name", nargs="?", help="Existing profile name.")
 
     add_parser = commands.add_parser("add", help="Add a card to the manual vocabulary inbox.")
     add_parser.add_argument(
@@ -510,6 +532,49 @@ def run_setup(settings_path: Path, *, skip_key: bool = False) -> int:
         print("OpenAI API key saved securely in macOS Keychain.")
     else:
         print("OpenAI API key setup skipped. Run 'ankii key set' whenever you are ready.")
+    return 0
+
+
+def _profile_value(label: str, provided: str | None, default: str | None = None) -> str:
+    if provided is not None:
+        return provided
+    if default is None:
+        return _required_input(label)
+    return input(f"{label} [{default}]: ").strip() or default
+
+
+def run_profile(args: argparse.Namespace, settings_path: Path) -> int:
+    settings = load_settings(settings_path)
+    if args.profile_command == "default":
+        name = args.name or _choose(
+            "profile", sorted(settings.profiles), preferred=settings.default_profile
+        )
+        updated = set_default_profile(settings_path, name)
+        print(f"Default profile: {updated.default_profile}")
+        return 0
+
+    name = _profile_value("Profile name (lowercase)", args.name)
+    study_language = _profile_value("Study language", args.study_language)
+    native_language = _profile_value("Native language", args.native_language, "English")
+    deck = _profile_value("Anki deck", args.deck, study_language)
+    minimum = args.min_level or _choose("minimum CEFR level", list(CEFR_LEVELS), "A1")
+    maximum = args.max_level or _choose("maximum CEFR level", list(CEFR_LEVELS), "B2")
+    profile = add_profile(
+        settings_path,
+        name,
+        study_language,
+        native_language,
+        deck,
+        minimum,
+        maximum,
+        make_default=args.default,
+    )
+    print(f"Created profile: {profile.name}")
+    print(f"Languages: {profile.study_language} -> {profile.native_language}")
+    print(f"Anki deck: {profile.deck}")
+    print(f"Reviews: {profile.review_root}")
+    if args.default:
+        print(f"Default profile: {profile.name}")
     return 0
 
 
@@ -1700,6 +1765,8 @@ def main() -> None:
             raise SystemExit(run_setup(args.settings, skip_key=args.skip_key))
         if args.command == "key":
             raise SystemExit(run_key(args.key_command))
+        if args.command == "profile":
+            raise SystemExit(run_profile(args, args.settings))
         settings = load_settings(args.settings)
         profile = settings.select_profile(args.profile)
         if getattr(args, "deck", None) is not None:

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
+import tempfile
 import tomllib
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -184,3 +187,101 @@ def load_settings(path: Path | None = None) -> Settings:
 
 
 DEFAULT_PROFILE = LanguageProfile("vietnamese", "Vietnamese", "English", "Vietnamese", "A1", "B2")
+
+
+def _toml_string(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _validated_profile_name(name: str) -> str:
+    normalized = name.strip()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", normalized):
+        raise ValueError(
+            "Profile names must start with a lowercase letter or number and contain only "
+            "lowercase letters, numbers, hyphens, or underscores."
+        )
+    return normalized
+
+
+def _replace_default_profile(text: str, name: str) -> str:
+    updated, count = re.subn(
+        r"(?m)^default_profile\s*=.*$",
+        f"default_profile = {_toml_string(name)}",
+        text,
+        count=1,
+    )
+    if count != 1:
+        raise ValueError("Settings must contain one top-level default_profile value.")
+    return updated
+
+
+def _write_validated_settings(path: Path, text: str) -> Settings:
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    os.close(descriptor)
+    temporary = Path(temporary_name)
+    try:
+        temporary.write_text(text, encoding="utf-8")
+        temporary.chmod(path.stat().st_mode & 0o777)
+        load_settings(temporary)
+        os.replace(temporary, path)
+    finally:
+        with suppress(OSError):
+            temporary.unlink()
+    return load_settings(path)
+
+
+def add_profile(
+    path: Path,
+    name: str,
+    study_language: str,
+    native_language: str,
+    deck: str,
+    analysis_min_level: str,
+    analysis_max_level: str,
+    *,
+    make_default: bool = False,
+) -> LanguageProfile:
+    settings = load_settings(path)
+    name = _validated_profile_name(name)
+    if name in settings.profiles:
+        raise ValueError(f"Profile {name!r} already exists.")
+    values = {
+        "study_language": study_language.strip(),
+        "native_language": native_language.strip(),
+        "deck": deck.strip(),
+    }
+    for key, value in values.items():
+        if not value:
+            raise ValueError(f"Profile {key.replace('_', ' ')} must not be empty.")
+    minimum = analysis_min_level.strip().upper()
+    maximum = analysis_max_level.strip().upper()
+    if minimum not in CEFR_LEVELS or maximum not in CEFR_LEVELS:
+        raise ValueError(f"Profile levels must be one of {', '.join(CEFR_LEVELS)}.")
+    if CEFR_LEVELS.index(minimum) > CEFR_LEVELS.index(maximum):
+        raise ValueError("Profile analysis level range must be ascending.")
+
+    block = (
+        f"\n[profiles.{name}]\n"
+        f"study_language = {_toml_string(values['study_language'])}\n"
+        f"native_language = {_toml_string(values['native_language'])}\n"
+        f"deck = {_toml_string(values['deck'])}\n"
+        f"analysis_min_level = {_toml_string(minimum)}\n"
+        f"analysis_max_level = {_toml_string(maximum)}\n"
+    )
+    text = path.read_text(encoding="utf-8").rstrip() + "\n" + block
+    if make_default:
+        text = _replace_default_profile(text, name)
+    updated = _write_validated_settings(path, text)
+    profile = updated.profiles[name]
+    profile.review_root.mkdir(parents=True, exist_ok=True)
+    return profile
+
+
+def set_default_profile(path: Path, name: str) -> Settings:
+    settings = load_settings(path)
+    name = name.strip()
+    if name not in settings.profiles:
+        available = ", ".join(sorted(settings.profiles))
+        raise ValueError(f"Unknown profile {name!r}. Available profiles: {available}.")
+    text = _replace_default_profile(path.read_text(encoding="utf-8"), name)
+    return _write_validated_settings(path, text)

@@ -29,6 +29,24 @@ pipx ensurepath
 pipx install "ankii[ai] @ git+https://github.com/Ichenn92/ankii.git@main"
 ```
 
+## Update
+
+Install updates from the public repository with:
+
+```bash
+pipx upgrade ankii
+```
+
+`pipx` remembers the Git source used during installation. If a release needs to be
+downloaded again, including one published without a version change, use:
+
+```bash
+pipx reinstall ankii
+```
+
+Updating the application does not remove settings, downloaded lessons, or reviews
+stored in the private per-user data directory described below.
+
 Install the AnkiConnect add-on in Anki Desktop and keep Anki open for commands that
 read or change the Anki collection.
 
@@ -108,6 +126,23 @@ Select a profile for one command or a shell session:
 ankii --profile french add "bonjour"
 ANKI_PROFILE=french ankii analyze
 ```
+
+Create a profile interactively, or provide every value directly:
+
+```bash
+ankii profile create
+ankii profile create spanish --study-language Spanish --native-language English \
+  --deck Spanish --min-level A1 --max-level B2 --default
+```
+
+Set any existing profile as the default:
+
+```bash
+ankii profile default
+ankii profile default spanish
+```
+
+Both actions are also available from the terminal dashboard.
 
 Selection precedence is `--profile`, then `ANKI_PROFILE`, then `default_profile`.
 Each profile has its own review directory and one enforced Anki deck.
@@ -197,6 +232,19 @@ review data. Verify that any imported media is suitable for your intended use.
 python -m pip install -e ".[ai,dev]"
 pytest
 ruff check .
+```
+
+To publish an update, first bump the version in `pyproject.toml` and
+`src/ankii/__init__.py`. Keep `main` release-ready because user installations track
+that branch, then test, commit, tag, and push the release:
+
+```bash
+pytest
+ruff check .
+git add .
+git commit -m "Release 0.1.1"
+git tag v0.1.1
+git push origin main --tags
 ```
 
 The installed command is `ankii`, matching the project and avoiding conflicts with Anki's

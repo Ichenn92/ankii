@@ -17,3 +17,10 @@ def test_setup_command_does_not_pass_profile() -> None:
     argv = command_argv(Path("/tmp/anki.toml"), "french", action)
 
     assert argv[-3:] == ["--settings", "/tmp/anki.toml", "setup"]
+
+
+def test_profile_management_actions_are_available() -> None:
+    commands = {action.name: action.command for action in ACTIONS}
+
+    assert commands["profile-create"] == ("profile", "create")
+    assert commands["profile-default"] == ("profile", "default")

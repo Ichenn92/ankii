@@ -2,7 +2,14 @@ from pathlib import Path
 
 import pytest
 
-from ankii.settings import CEFR_LEVELS, create_default_settings, data_root, load_settings
+from ankii.settings import (
+    CEFR_LEVELS,
+    add_profile,
+    create_default_settings,
+    data_root,
+    load_settings,
+    set_default_profile,
+)
 
 
 def _write(path: Path, body: str) -> Path:
@@ -116,3 +123,36 @@ def test_create_default_settings_does_not_overwrite(tmp_path: Path) -> None:
     assert "settings_version = 1" in original
     assert create_default_settings(path) == (path, False)
     assert path.read_text(encoding="utf-8") == original
+
+
+def test_add_profile_preserves_settings_and_can_make_it_default(tmp_path: Path) -> None:
+    path, _created = create_default_settings(tmp_path / "anki.toml")
+    original = path.read_text(encoding="utf-8") + "\n# keep this comment\n"
+    path.write_text(original, encoding="utf-8")
+
+    profile = add_profile(
+        path,
+        "spanish",
+        "Spanish",
+        "English",
+        "Spanish",
+        "A1",
+        "B2",
+        make_default=True,
+    )
+
+    settings = load_settings(path)
+    assert profile.name == "spanish"
+    assert settings.default_profile == "spanish"
+    assert settings.profiles["spanish"].deck == "Spanish"
+    assert profile.review_root.is_dir()
+    assert "# keep this comment" in path.read_text(encoding="utf-8")
+
+
+def test_profile_mutations_reject_duplicate_and_unknown_names(tmp_path: Path) -> None:
+    path, _created = create_default_settings(tmp_path / "anki.toml")
+
+    with pytest.raises(ValueError, match="already exists"):
+        add_profile(path, "french", "French", "English", "French", "A1", "B2")
+    with pytest.raises(ValueError, match="Unknown profile"):
+        set_default_profile(path, "missing")

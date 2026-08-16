@@ -111,6 +111,20 @@ ACTIONS: tuple[TuiAction, ...] = (
         "Find grammar patterns in vocabulary examples that are not yet cards.",
     ),
     TuiAction(
+        "profile-create",
+        "o",
+        "Create a profile",
+        ("profile", "create"),
+        "Create a language profile and its private review directory.",
+    ),
+    TuiAction(
+        "profile-default",
+        "d",
+        "Set default profile",
+        ("profile", "default"),
+        "Choose which profile is used when no profile is specified.",
+    ),
+    TuiAction(
         "key",
         "k",
         "Manage OpenAI key",
