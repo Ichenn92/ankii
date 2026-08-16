@@ -3,7 +3,7 @@ from unittest.mock import call, patch
 
 from ankii import cli
 from ankii.audio import LocalVoice
-from ankii.settings import load_settings
+from ankii.settings import LanguageProfile, load_settings
 
 
 def test_setup_creates_settings_and_profile_directories(monkeypatch, tmp_path: Path) -> None:
@@ -110,3 +110,28 @@ def test_disables_deck_audio_autoplay_but_keeps_other_options(invoke) -> None:
         "saveDeckConfig",
         config={"id": 42, "name": "Vietnamese", "autoplay": False, "replayq": True},
     ) in invoke.mock_calls
+
+
+@patch("ankii.cli.invoke")
+def test_bootstrap_note_types_creates_profile_deck(invoke, monkeypatch) -> None:
+    profile = LanguageProfile("french", "French", "English", "French", "A1", "B2")
+    calls = []
+    monkeypatch.setattr(
+        cli,
+        "bootstrap_learning_models",
+        lambda vocabulary, grammar: calls.append((vocabulary, grammar))
+        or {"vocabulary_created": 1, "grammar_created": 1},
+    )
+    monkeypatch.setattr(cli, "_disable_deck_audio_autoplay", lambda _deck: True)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "CREATE")
+    invoke.return_value = []
+
+    assert cli.run_anki(
+        "bootstrap-note-types",
+        profile=profile,
+        vocabulary_model="Words",
+        grammar_model="Rules",
+    ) == 0
+
+    assert calls == [("Words", "Rules")]
+    assert call("createDeck", deck="French") in invoke.mock_calls

@@ -76,6 +76,7 @@ def test_dashboard_contains_every_cli_leaf_command() -> None:
         ("anki", "fields"),
         ("anki", "setup-note-type"),
         ("anki", "setup-note-types"),
+        ("anki", "bootstrap-note-types"),
         ("import",),
         ("backfill-examples",),
         ("backfill-audio",),

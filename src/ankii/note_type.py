@@ -343,6 +343,107 @@ GRAMMAR_CSS = """.card {
   .grammar-pattern { font-size: 32px; }
 }""" + SOURCE_CSS
 
+VOCABULARY_FIELDS = (
+    "Target",
+    "Native",
+    "Example Target",
+    "Example Native",
+    "Source",
+    "Lesson",
+    "AIExplanation",
+    "Image",
+    "Import ID",
+    *VOCABULARY_AUDIO_FIELDS,
+    RELATED_WORDS_FIELD,
+)
+
+VOCABULARY_FRONT = """{{#Image}}<div class="yhw-image">{{Image}}</div>{{/Image}}
+<div class="yhw-target">{{Target}}</div>
+"""
+
+VOCABULARY_BACK = """{{FrontSide}}
+<div class="yhw-answer">
+  <div class="yhw-native">{{Native}}</div>
+</div>
+"""
+
+VOCABULARY_CSS = """.card {
+  box-sizing: border-box;
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 28px 22px;
+  background: #faf8f3;
+  color: #252525;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+  text-align: center;
+}
+.yhw-image img {
+  max-width: 100%;
+  max-height: 320px;
+  margin-bottom: 20px;
+  border-radius: 10px;
+}
+.yhw-target {
+  font-size: 38px;
+  font-weight: 750;
+  line-height: 1.3;
+}
+.yhw-answer {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid #d9d2c3;
+}
+.yhw-native {
+  font-size: 25px;
+  line-height: 1.45;
+}
+@media (max-width: 480px) {
+  .card { padding: 22px 14px; }
+  .yhw-target { font-size: 32px; }
+}
+""" + EXAMPLE_CSS + RELATED_WORDS_CSS
+
+
+def bootstrap_learning_models(
+    vocabulary_model: str = "Vocabulary",
+    grammar_model: str = "Grammar",
+) -> dict[str, int]:
+    """Create the managed learning models without requiring a legacy source model."""
+    models = set(invoke("modelNames"))
+    vocabulary_created = 0
+    grammar_created = 0
+
+    if vocabulary_model not in models:
+        front = _place_target_audio(VOCABULARY_FRONT)
+        back = _append_once(VOCABULARY_BACK, EXAMPLE_MARKERS[0], EXAMPLE_TEMPLATE)
+        back = _append_once(back, SOURCE_MARKERS[0], SOURCE_TEMPLATE)
+        back = _append_once(back, RELATED_WORDS_START, RELATED_WORDS_TEMPLATE)
+        invoke(
+            "createModel",
+            modelName=vocabulary_model,
+            inOrderFields=list(VOCABULARY_FIELDS),
+            cardTemplates=[{"Name": "Vocabulary", "Front": front, "Back": back}],
+            css=VOCABULARY_CSS,
+        )
+        vocabulary_created = 1
+
+    if grammar_model not in models:
+        invoke(
+            "createModel",
+            modelName=grammar_model,
+            inOrderFields=list(GRAMMAR_FIELDS),
+            cardTemplates=[
+                {"Name": "Grammar", "Front": GRAMMAR_FRONT, "Back": GRAMMAR_BACK}
+            ],
+            css=GRAMMAR_CSS,
+        )
+        grammar_created = 1
+
+    return {
+        "vocabulary_created": vocabulary_created,
+        "grammar_created": grammar_created,
+    }
+
 
 def _append_once(value: str, marker: str, addition: str) -> str:
     if marker in value:

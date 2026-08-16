@@ -272,8 +272,14 @@ ankii anki status
 ankii anki decks
 ankii anki models
 ankii anki fields Vocabulary
+ankii anki bootstrap-note-types
 ankii anki setup-note-types Vietnamese
 ```
+
+Use `bootstrap-note-types` for a new Anki collection. It creates the shared `Vocabulary`
+and `Grammar` note types without requiring a language-specific source note type and leaves
+either model untouched when it already exists. Use `setup-note-types SOURCE` when migrating
+an existing language-specific vocabulary note type instead.
 
 The shared note types use language-neutral fields: `Target`, `Native`, `Example Target`,
 `Example Native`, `Target Audio`, `Example Audio`, and the optional `Related Words`. `Source`

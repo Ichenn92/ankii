@@ -7,13 +7,54 @@ from ankii.note_type import (
     GRAMMAR_CSS,
     GRAMMAR_FIELDS,
     TARGET_AUDIO_TEMPLATE,
+    VOCABULARY_FIELDS,
     _close_unbalanced_css_blocks,
     _migrate_generic_fields,
     _place_example_audio,
     _place_target_audio,
+    bootstrap_learning_models,
     setup_learning_models,
     setup_note_type,
 )
+
+
+@patch("ankii.note_type.invoke")
+def test_bootstrap_learning_models_creates_complete_generic_models(invoke) -> None:
+    invoke.side_effect = [[], None, None]
+
+    result = bootstrap_learning_models()
+
+    assert result == {"vocabulary_created": 1, "grammar_created": 1}
+    vocabulary_call = next(
+        item
+        for item in invoke.mock_calls
+        if item.args == ("createModel",) and item.kwargs["modelName"] == "Vocabulary"
+    )
+    assert vocabulary_call.kwargs["inOrderFields"] == list(VOCABULARY_FIELDS)
+    template = vocabulary_call.kwargs["cardTemplates"][0]
+    assert "{{Target}}" in template["Front"]
+    assert "{{Target Audio}}" in template["Front"]
+    assert "{{Native}}" in template["Back"]
+    assert "{{Example Target}}" in template["Back"]
+    assert "{{Example Native}}" in template["Back"]
+    assert "{{Source}}" in template["Back"]
+    assert "{{Related Words}}" in template["Back"]
+    grammar_call = next(
+        item
+        for item in invoke.mock_calls
+        if item.args == ("createModel",) and item.kwargs["modelName"] == "Grammar"
+    )
+    assert grammar_call.kwargs["inOrderFields"] == list(GRAMMAR_FIELDS)
+
+
+@patch("ankii.note_type.invoke")
+def test_bootstrap_learning_models_leaves_existing_models_untouched(invoke) -> None:
+    invoke.return_value = ["Vocabulary", "Grammar"]
+
+    result = bootstrap_learning_models()
+
+    assert result == {"vocabulary_created": 0, "grammar_created": 0}
+    invoke.assert_called_once_with("modelNames")
 
 
 @patch("ankii.note_type.invoke")

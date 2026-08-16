@@ -165,6 +165,14 @@ ACTIONS: tuple[TuiAction, ...] = (
         section="Anki",
     ),
     TuiAction(
+        "bootstrap-note-types",
+        "3",
+        "Bootstrap note types",
+        ("anki", "bootstrap-note-types"),
+        "Create missing managed Vocabulary and Grammar note types from scratch.",
+        section="Anki",
+    ),
+    TuiAction(
         "note-types",
         "u",
         "Set up note types",

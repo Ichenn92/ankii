@@ -57,7 +57,12 @@ from ankii.keychain import (
     store_keychain_key,
 )
 from ankii.maintenance import apply_reimport, apply_retags, prepare_reimport, retag_notes
-from ankii.note_type import backfill_examples, setup_learning_models, setup_note_type
+from ankii.note_type import (
+    backfill_examples,
+    bootstrap_learning_models,
+    setup_learning_models,
+    setup_note_type,
+)
 from ankii.review import (
     AI_TAG_PREFIXES,
     ALLOWED_AI_TAGS,
@@ -289,6 +294,10 @@ Run 'ankii COMMAND --help' for help with a specific command.""",
     setup_models_parser.add_argument(
         "source", nargs="?", default=None, help="Existing language-specific vocabulary note type."
     )
+    anki_commands.add_parser(
+        "bootstrap-note-types",
+        help="Create missing managed Vocabulary and Grammar note types from scratch.",
+    )
     import_parser = commands.add_parser(
         "import",
         help="Import approved cards into Anki.",
@@ -508,6 +517,23 @@ def run_anki(
             "Target Audio, Example Audio, Related Words"
         )
         print("The original source note type is left empty and can be removed in Anki.")
+    elif command == "bootstrap-note-types":
+        print(
+            f"This will create missing {vocabulary_model!r} and {grammar_model!r} note types "
+            "without migrating an existing note type."
+        )
+        if input("Type CREATE to continue: ").strip() != "CREATE":
+            print("Bootstrap cancelled. No changes were made.")
+            return 0
+        result = bootstrap_learning_models(vocabulary_model, grammar_model)
+        decks = invoke("deckNames")
+        if profile.deck not in decks:
+            invoke("createDeck", deck=profile.deck)
+        autoplay_disabled = _disable_deck_audio_autoplay(profile.deck)
+        print(f"Vocabulary model created: {result['vocabulary_created']}")
+        print(f"Grammar model created: {result['grammar_created']}")
+        print(f"Profile deck: {profile.deck}")
+        print(f"Audio autoplay: {'disabled' if autoplay_disabled else 'already disabled'}")
     return 0
 
 
