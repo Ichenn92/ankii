@@ -20,10 +20,11 @@ from typing import ClassVar
 # TEXTUAL_DISABLE_KITTY_KEY=0.
 os.environ.setdefault("TEXTUAL_DISABLE_KITTY_KEY", "1")
 
-from textual import on
+from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.message import Message
 from textual.widgets import (
     Button,
     Footer,
@@ -49,6 +50,27 @@ class TuiAction:
     needs_settings: bool = True
     vietnamese_only: bool = False
     section: str = "New"
+
+
+class TerminalInput(Input):
+    """Single-line editor that forwards multi-line pastes to the terminal intact."""
+
+    @dataclass
+    class MultilinePasted(Message):
+        input: TerminalInput
+        text: str
+
+        @property
+        def control(self) -> TerminalInput:
+            return self.input
+
+    def _on_paste(self, event: events.Paste) -> None:
+        if "\n" not in event.text and "\r" not in event.text:
+            super()._on_paste(event)
+            return
+        text = event.text.replace("\r\n", "\n").replace("\r", "\n")
+        self.post_message(self.MultilinePasted(self, text.rstrip("\n") + "\n"))
+        event.stop()
 
 
 ACTIONS: tuple[TuiAction, ...] = (
@@ -394,7 +416,7 @@ class CommandPane(Vertical):
         yield Static(self.command_title, id="command-header")
         with VerticalScroll(id="terminal-frame"):
             yield RichLog(id="terminal-output", wrap=True, markup=False, auto_scroll=True)
-        yield Input(placeholder="Type a response and press Enter", id="terminal-input")
+        yield TerminalInput(placeholder="Type a response and press Enter", id="terminal-input")
         with Horizontal(id="command-footer"):
             yield Static("Command running · Ctrl+C cancels", id="command-status")
             yield Button("Cancel", id="command-back", variant="error")
@@ -469,13 +491,21 @@ class CommandPane(Vertical):
 
     @on(Input.Submitted, "#terminal-input")
     def submit_input(self, event: Input.Submitted) -> None:
+        self._write_input(event.value + "\n")
+        event.input.value = ""
+
+    @on(TerminalInput.MultilinePasted, "#terminal-input")
+    def paste_multiline(self, event: TerminalInput.MultilinePasted) -> None:
+        self._write_input(event.text)
+        self.query_one("#terminal-input", TerminalInput).value = ""
+
+    def _write_input(self, text: str) -> None:
         if self.master_fd is None or self.return_code is not None:
             return
         try:
-            os.write(self.master_fd, (event.value + "\n").encode())
+            os.write(self.master_fd, text.encode())
         except OSError:
             return
-        event.input.value = ""
 
     @on(Button.Pressed, "#command-back")
     def press_back(self) -> None:

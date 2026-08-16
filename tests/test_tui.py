@@ -2,13 +2,33 @@ import asyncio
 import os
 from pathlib import Path
 
+from textual import events
+
 from ankii import cli
 from ankii.settings import create_default_settings, set_default_profile
-from ankii.tui import ACTIONS, AnkiiApp, CommandPane, command_argv
+from ankii.tui import ACTIONS, AnkiiApp, CommandPane, TerminalInput, command_argv
 
 
 def test_tui_preserves_terminal_input_method_composition() -> None:
     assert os.environ["TEXTUAL_DISABLE_KITTY_KEY"] == "1"
+
+
+def test_terminal_input_forwards_multiline_paste_with_final_newline() -> None:
+    class RecordingInput(TerminalInput):
+        def __init__(self) -> None:
+            super().__init__()
+            self.pasted = ""
+
+        def post_message(self, message) -> bool:
+            assert isinstance(message, TerminalInput.MultilinePasted)
+            assert message.input is self
+            self.pasted = message.text
+            return True
+
+    input_widget = RecordingInput()
+    input_widget._on_paste(events.Paste("bonjour\r\ngoodbye"))
+
+    assert input_widget.pasted == "bonjour\ngoodbye\n"
 
 
 def test_dashboard_hides_command_pane_on_startup(tmp_path: Path) -> None:
