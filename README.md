@@ -222,6 +222,11 @@ ankii anki fields Vocabulary
 ankii anki setup-note-types Vietnamese
 ```
 
+The shared note types use language-neutral fields: `Target`, `Native`, `Example Target`, and
+`Example Native`. `Source` remains reserved for citation titles and URLs. Setup migrates values
+from legacy `Vietnamese`, `English`, `Example VN`, and `Example EN` fields before removing those
+language-specific fields.
+
 Maintenance commands preview their changes and require explicit confirmation:
 
 ```bash

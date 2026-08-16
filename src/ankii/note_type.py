@@ -342,6 +342,8 @@ def setup_learning_models(
             "{{English}}": "{{Native}}",
             "{{Example VN}}": "{{Example Target}}",
             "{{Example EN}}": "{{Example Native}}",
+            "{{Everyday Example VN}}": "{{Example Target}}",
+            "{{Everyday Example EN}}": "{{Example Native}}",
         }
         for old, new in replacements.items():
             value = value.replace(old, new)
@@ -399,7 +401,9 @@ def setup_learning_models(
         vocabulary_created = 1
     else:
         vocabulary_fields = invoke("modelFieldNames", modelName=vocabulary_model)
-        _migrate_generic_fields(vocabulary_model, vocabulary_fields)
+        legacy_vocabulary_fields = _migrate_generic_fields(
+            vocabulary_model, vocabulary_fields
+        )
         vocabulary_fields = invoke("modelFieldNames", modelName=vocabulary_model)
         if "Import ID" not in vocabulary_fields:
             invoke(
@@ -432,6 +436,8 @@ def setup_learning_models(
                 "updateModelStyling",
                 model={"name": vocabulary_model, "css": cleaned_css},
             )
+        for field in legacy_vocabulary_fields:
+            invoke("modelFieldRemove", modelName=vocabulary_model, fieldName=field)
 
     migrated = 0
     if source_model in models and source_model != vocabulary_model:
@@ -476,7 +482,9 @@ def setup_learning_models(
         grammar_created = 1
     else:
         existing_fields = invoke("modelFieldNames", modelName=grammar_model)
-        _migrate_generic_fields(grammar_model, existing_fields, examples_only=True)
+        legacy_grammar_fields = _migrate_generic_fields(
+            grammar_model, existing_fields, examples_only=True
+        )
         existing_fields = invoke("modelFieldNames", modelName=grammar_model)
         for field in GRAMMAR_FIELDS:
             if field not in existing_fields:
@@ -497,6 +505,8 @@ def setup_learning_models(
                 "updateModelStyling",
                 model={"name": grammar_model, "css": GRAMMAR_CSS},
             )
+        for field in legacy_grammar_fields:
+            invoke("modelFieldRemove", modelName=grammar_model, fieldName=field)
 
     return {
         "vocabulary_created": vocabulary_created,
@@ -507,11 +517,17 @@ def setup_learning_models(
 
 def _migrate_generic_fields(
     model: str, fields: list[str], *, examples_only: bool = False
-) -> None:
-    """Safely migrate legacy language-specific fields without overwriting values."""
-    pairs = [("Example VN", "Example Target"), ("Example EN", "Example Native")]
+) -> list[str]:
+    """Migrate legacy fields and return redundant fields that can be removed."""
+    pairs = [
+        ("Example VN", "Example Target"),
+        ("Example EN", "Example Native"),
+        ("Everyday Example VN", "Example Target"),
+        ("Everyday Example EN", "Example Native"),
+    ]
     if not examples_only:
         pairs = [("Vietnamese", "Target"), ("English", "Native"), *pairs]
+    removable: list[str] = []
     for old, new in pairs:
         if old not in fields:
             continue
@@ -529,6 +545,22 @@ def _migrate_generic_fields(
                     "updateNoteFields",
                     note={"id": note["noteId"], "fields": {new: old_value}},
                 )
+            elif old_value and old_value != new_value:
+                if new in {"Example Target", "Example Native"}:
+                    invoke(
+                        "updateNoteFields",
+                        note={
+                            "id": note["noteId"],
+                            "fields": {new: f"{new_value}<br>{old_value}"},
+                        },
+                    )
+                else:
+                    raise ValueError(
+                        f"Cannot remove legacy field {old!r} from {model!r}: note "
+                        f"{note['noteId']} has a different value in {new!r}."
+                    )
+        removable.append(old)
+    return removable
 
 
 def setup_note_type(model: str) -> dict[str, int]:

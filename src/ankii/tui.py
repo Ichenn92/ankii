@@ -470,6 +470,7 @@ class AnkiiApp(App[None]):
         super().__init__()
         self.settings_path = settings_path.expanduser()
         self.requested_profile = requested_profile
+        self.follow_default_profile = requested_profile is None
         self.settings: Settings | None = None
         self.profile: LanguageProfile | None = None
         self.config_error: str | None = None
@@ -478,8 +479,10 @@ class AnkiiApp(App[None]):
     def _reload_settings(self) -> None:
         try:
             self.settings = load_settings(self.settings_path)
-            self.profile = self.settings.select_profile(self.requested_profile)
-            self.requested_profile = self.profile.name
+            selected = None if self.follow_default_profile else self.requested_profile
+            self.profile = self.settings.select_profile(selected)
+            if not self.follow_default_profile:
+                self.requested_profile = self.profile.name
             self.config_error = None
         except (OSError, TypeError, ValueError) as exc:
             self.settings = None
@@ -564,7 +567,11 @@ class AnkiiApp(App[None]):
             return
         argv = command_argv(
             self.settings_path,
-            self.profile.name if self.profile is not None else None,
+            (
+                self.profile.name
+                if self.profile is not None and not self.follow_default_profile
+                else None
+            ),
             action,
         )
         self.query_one("#body").display = False
@@ -586,6 +593,7 @@ class AnkiiApp(App[None]):
         names = list(self.settings.profiles)
         current = self.profile.name if self.profile is not None else names[0]
         next_index = (names.index(current) + 1) % len(names)
+        self.follow_default_profile = False
         self.requested_profile = names[next_index]
         self._refresh_dashboard()
         self.notify(f"Active profile: {self.requested_profile}")

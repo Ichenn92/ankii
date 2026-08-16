@@ -5,9 +5,55 @@ from ankii.note_type import (
     GRAMMAR_CSS,
     GRAMMAR_FIELDS,
     _close_unbalanced_css_blocks,
+    _migrate_generic_fields,
     setup_learning_models,
     setup_note_type,
 )
+
+
+@patch("ankii.note_type.invoke")
+def test_generic_migration_preserves_examples_before_removing_legacy_fields(invoke) -> None:
+    fields = ["Target", "Native", "Example Target", "Everyday Example VN"]
+    invoke.side_effect = [
+        [10],
+        [
+            {
+                "noteId": 10,
+                "fields": {
+                    "Example Target": {"value": "Source example"},
+                    "Everyday Example VN": {"value": "Everyday example"},
+                },
+            }
+        ],
+        None,
+    ]
+
+    removable = _migrate_generic_fields("Vocabulary", fields)
+
+    assert removable == ["Everyday Example VN"]
+    assert call(
+        "updateNoteFields",
+        note={
+            "id": 10,
+            "fields": {"Example Target": "Source example<br>Everyday example"},
+        },
+    ) in invoke.mock_calls
+
+
+@patch("ankii.note_type.invoke")
+def test_generic_migration_renames_language_specific_fields(invoke) -> None:
+    fields = ["Vietnamese", "English", "Example VN", "Example EN"]
+
+    removable = _migrate_generic_fields("Vocabulary", fields)
+
+    assert removable == []
+    assert fields == ["Target", "Native", "Example Target", "Example Native"]
+    assert call(
+        "modelFieldRename",
+        modelName="Vocabulary",
+        oldFieldName="Vietnamese",
+        newFieldName="Target",
+    ) in invoke.mock_calls
 
 
 def test_closes_inherited_css_before_managed_styles_are_appended() -> None:

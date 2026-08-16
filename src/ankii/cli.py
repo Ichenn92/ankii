@@ -274,7 +274,7 @@ Run 'ankii COMMAND --help' for help with a specific command.""",
     )
     setup_models_parser = anki_commands.add_parser(
         "setup-note-types",
-        help="Migrate Vietnamese to Vocabulary and create a matching Grammar note type.",
+        help="Migrate language-specific fields to generic Vocabulary and Grammar fields.",
     )
     setup_models_parser.add_argument(
         "source", nargs="?", default=None, help="Existing language-specific vocabulary note type."
@@ -510,6 +510,7 @@ def run_anki(
         print(f"Vocabulary notes migrated: {result['notes_migrated']}")
         print(f"Grammar model created: {result['grammar_created']}")
         print(f"Profile deck: {profile.deck}")
+        print("Vocabulary fields: Target, Native, Example Target, Example Native")
         print("The original source note type is left empty and can be removed in Anki.")
     return 0
 
