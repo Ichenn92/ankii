@@ -1,0 +1,35 @@
+{
+  "review_version": 2,
+  "profile": {
+    "name": "vietnamese",
+    "study_language": "Vietnamese",
+    "native_language": "English"
+  },
+  "lesson": {
+    "public_id": "synthetic-example",
+    "title": "Synthetic example",
+    "source_language": "Vietnamese",
+    "source_url": ""
+  },
+  "cards": [
+    {
+      "word": "xin chào",
+      "meaning": "hello",
+      "example_target": "Xin chào! Rất vui được gặp bạn.",
+      "example_native": "Hello! Nice to meet you.",
+      "image_url": "",
+      "import_id": "ankii:synthetic-example-001",
+      "tags": [
+        "source::synthetic",
+        "language::vietnamese",
+        "part_of_speech::expression",
+        "topic::communication",
+        "register::neutral",
+        "level::A1"
+      ],
+      "ai_explanation": "Synthetic demonstration card created for this repository.",
+      "approved": false,
+      "skip": false
+    }
+  ]
+}
