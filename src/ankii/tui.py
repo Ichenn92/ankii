@@ -13,6 +13,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
+# Textual's enhanced Kitty keyboard protocol reports physical key presses in
+# supporting terminals. That prevents macOS input methods (including Vietnamese
+# Telex) from composing text before it reaches the Input widget. Users who need
+# the enhanced protocol can explicitly restore it with
+# TEXTUAL_DISABLE_KITTY_KEY=0.
+os.environ.setdefault("TEXTUAL_DISABLE_KITTY_KEY", "1")
+
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -41,6 +48,7 @@ class TuiAction:
     description: str
     needs_settings: bool = True
     vietnamese_only: bool = False
+    section: str = "New"
 
 
 ACTIONS: tuple[TuiAction, ...] = (
@@ -53,20 +61,6 @@ ACTIONS: tuple[TuiAction, ...] = (
         "Analyze a passage and choose vocabulary or grammar cards.",
     ),
     TuiAction(
-        "import",
-        "i",
-        "Import approved cards",
-        ("import",),
-        "Choose a review, preview duplicates, and import it into Anki.",
-    ),
-    TuiAction(
-        "approve",
-        "r",
-        "Review and approve",
-        ("approve",),
-        "Open an existing review and approve or edit its cards.",
-    ),
-    TuiAction(
         "wizard",
         "w",
         "YourHomework wizard",
@@ -75,12 +69,60 @@ ACTIONS: tuple[TuiAction, ...] = (
         vietnamese_only=True,
     ),
     TuiAction(
-        "tones",
+        "tag",
         "t",
-        "Vietnamese tone family",
-        ("tones",),
-        "Generate a Southern Vietnamese tone-family review.",
-        vietnamese_only=True,
+        "Tag a review",
+        ("tag",),
+        "Choose a review and add AI-generated taxonomy tags.",
+        section="Review",
+    ),
+    TuiAction(
+        "approve",
+        "r",
+        "Review and approve",
+        ("approve",),
+        "Open an existing review and approve or edit its cards.",
+        section="Review",
+    ),
+    TuiAction(
+        "import",
+        "i",
+        "Import approved cards",
+        ("import",),
+        "Choose a review, preview duplicates, and import it into Anki.",
+        section="Import",
+    ),
+    TuiAction(
+        "reimport",
+        "j",
+        "Reimport local reviews",
+        ("reimport", "--all"),
+        "Preview and update existing Anki notes from local review files.",
+        section="Import",
+    ),
+    TuiAction(
+        "backfill-examples",
+        "b",
+        "Backfill examples",
+        ("backfill-examples",),
+        "Fill empty example fields on existing Vocabulary notes from a review.",
+        section="Maintenance",
+    ),
+    TuiAction(
+        "backfill-audio",
+        "e",
+        "Generate missing audio",
+        ("backfill-audio",),
+        "Review missing Vocabulary audio and generate selected clips.",
+        section="Maintenance",
+    ),
+    TuiAction(
+        "retag",
+        "g",
+        "Retag Vocabulary notes",
+        ("retag", "--all"),
+        "Preview and recalculate taxonomy tags on Vocabulary notes.",
+        section="Maintenance",
     ),
     TuiAction(
         "connection",
@@ -88,6 +130,15 @@ ACTIONS: tuple[TuiAction, ...] = (
         "Check Anki connection",
         ("anki", "status"),
         "Confirm that Anki Desktop and AnkiConnect are available.",
+        section="Anki",
+    ),
+    TuiAction(
+        "decks",
+        "1",
+        "List decks",
+        ("anki", "decks"),
+        "Inspect the decks currently available in Anki.",
+        section="Anki",
     ),
     TuiAction(
         "models",
@@ -95,6 +146,23 @@ ACTIONS: tuple[TuiAction, ...] = (
         "List note types",
         ("anki", "models"),
         "Inspect the note types currently available in Anki.",
+        section="Anki",
+    ),
+    TuiAction(
+        "fields",
+        "h",
+        "List note fields",
+        ("anki", "fields"),
+        "Choose a note type and list all of its fields.",
+        section="Anki",
+    ),
+    TuiAction(
+        "note-type",
+        "2",
+        "Set up one note type",
+        ("anki", "setup-note-type"),
+        "Choose and update a single existing note type.",
+        section="Anki",
     ),
     TuiAction(
         "note-types",
@@ -102,21 +170,110 @@ ACTIONS: tuple[TuiAction, ...] = (
         "Set up note types",
         ("anki", "setup-note-types"),
         "Create or migrate the managed Vocabulary and Grammar note types.",
+        section="Anki",
     ),
     TuiAction(
-        "grammar",
-        "g",
-        "Discover grammar",
-        ("grammar-check", "--all"),
-        "Find grammar patterns in vocabulary examples that are not yet cards.",
+        "profile-languages",
+        "4",
+        "List supported languages",
+        ("profile", "languages"),
+        "Show languages accepted when creating a profile.",
+        needs_settings=False,
+        section="Profiles",
     ),
     TuiAction(
-        "key",
+        "profile-create",
+        "o",
+        "Create a profile",
+        ("profile", "create"),
+        "Create a language profile and its private review directory.",
+        section="Profiles",
+    ),
+    TuiAction(
+        "profile-default",
+        "d",
+        "Set default profile",
+        ("profile", "default"),
+        "Choose which profile is used when no profile is specified.",
+        section="Profiles",
+    ),
+    TuiAction(
+        "profile-list",
+        "l",
+        "List profiles",
+        ("profile", "list"),
+        "Show every configured profile and the current default.",
+        section="Profiles",
+    ),
+    TuiAction(
+        "profile-delete",
+        "x",
+        "Delete a profile",
+        ("profile", "delete"),
+        "Remove a profile configuration while preserving its review files.",
+        section="Profiles",
+    ),
+    TuiAction(
+        "audio-setup",
+        "7",
+        "Set up audio generation",
+        ("audio", "setup"),
+        "Choose OpenAI or a local device voice for this profile.",
+        section="Profiles",
+    ),
+    TuiAction(
+        "audio-voices",
+        "8",
+        "List local audio voices",
+        ("audio", "voices"),
+        "List speech voices and language locales installed on this device.",
+        needs_settings=False,
+        section="Profiles",
+    ),
+    TuiAction(
+        "version",
+        "v",
+        "Check for updates",
+        ("version",),
+        "Compare the installed ankii version with the latest version on GitHub.",
+        needs_settings=False,
+        section="Application",
+    ),
+    TuiAction(
+        "upgrade",
+        "z",
+        "Upgrade ankii",
+        ("upgrade",),
+        "Upgrade the pipx installation to the latest available ankii version.",
+        needs_settings=False,
+        section="Application",
+    ),
+    TuiAction(
+        "key-status",
         "k",
-        "Manage OpenAI key",
+        "Check OpenAI key",
         ("key", "status"),
         "Check whether an OpenAI API key is available.",
         needs_settings=False,
+        section="Application",
+    ),
+    TuiAction(
+        "key-set",
+        "5",
+        "Set OpenAI key",
+        ("key", "set"),
+        "Securely add or replace the OpenAI API key.",
+        needs_settings=False,
+        section="Application",
+    ),
+    TuiAction(
+        "key-delete",
+        "6",
+        "Delete OpenAI key",
+        ("key", "delete"),
+        "Delete the stored OpenAI API key from Keychain.",
+        needs_settings=False,
+        section="Application",
     ),
     TuiAction(
         "setup",
@@ -125,8 +282,31 @@ ACTIONS: tuple[TuiAction, ...] = (
         ("setup",),
         "Create local settings and optionally store an OpenAI API key.",
         needs_settings=False,
+        section="Application",
     ),
 )
+
+
+def _action_items() -> list[ListItem]:
+    items: list[ListItem] = []
+    current_section: str | None = None
+    for action in ACTIONS:
+        if action.section != current_section:
+            current_section = action.section
+            items.append(
+                ListItem(
+                    Label(action.section),
+                    classes="action-section",
+                    disabled=True,
+                )
+            )
+        items.append(
+            ListItem(
+                Label(f"{action.key}   {action.label}"),
+                id=f"action-{action.name}",
+            )
+        )
+    return items
 
 
 def command_argv(
@@ -159,8 +339,8 @@ def _inbox_counts(profile: LanguageProfile) -> tuple[int, int]:
 class CommandPane(Vertical):
     """Run an existing interactive CLI command inside the Textual application."""
 
-    CSS = """
-    #command-pane {
+    DEFAULT_CSS = """
+    CommandPane {
         height: 1fr;
         display: none;
         background: #111418;
@@ -220,6 +400,7 @@ class CommandPane(Vertical):
 
     def __init__(self) -> None:
         super().__init__(id="command-pane")
+        self.display = False
         self.command_title = ""
         self.argv: list[str] = []
         self.process: subprocess.Popen[bytes] | None = None
@@ -394,6 +575,14 @@ class AnkiiApp(App[None]):
         padding: 0 1;
     }
 
+    ListItem.action-section {
+        height: 2;
+        padding: 1 1 0 1;
+        color: #8ecae6;
+        text-style: bold;
+        background: #171b21;
+    }
+
     ListItem.--highlight {
         background: #3a86ff;
         color: white;
@@ -442,6 +631,7 @@ class AnkiiApp(App[None]):
         super().__init__()
         self.settings_path = settings_path.expanduser()
         self.requested_profile = requested_profile
+        self.follow_default_profile = requested_profile is None
         self.settings: Settings | None = None
         self.profile: LanguageProfile | None = None
         self.config_error: str | None = None
@@ -450,8 +640,10 @@ class AnkiiApp(App[None]):
     def _reload_settings(self) -> None:
         try:
             self.settings = load_settings(self.settings_path)
-            self.profile = self.settings.select_profile(self.requested_profile)
-            self.requested_profile = self.profile.name
+            selected = None if self.follow_default_profile else self.requested_profile
+            self.profile = self.settings.select_profile(selected)
+            if not self.follow_default_profile:
+                self.requested_profile = self.profile.name
             self.config_error = None
         except (OSError, TypeError, ValueError) as exc:
             self.settings = None
@@ -463,16 +655,7 @@ class AnkiiApp(App[None]):
         with Horizontal(id="body"):
             with Vertical(id="sidebar"):
                 yield Static(self._profile_text(), id="profile")
-                yield ListView(
-                    *(
-                        ListItem(
-                            Label(f"{action.key}   {action.label}"),
-                            id=f"action-{action.name}",
-                        )
-                        for action in ACTIONS
-                    ),
-                    id="actions",
-                )
+                yield ListView(*_action_items(), id="actions")
             with Vertical(id="main"):
                 yield Static("One terminal for your complete Anki workflow", id="welcome")
                 yield Static(ACTIONS[0].description, id="details")
@@ -536,7 +719,11 @@ class AnkiiApp(App[None]):
             return
         argv = command_argv(
             self.settings_path,
-            self.profile.name if self.profile is not None else None,
+            (
+                self.profile.name
+                if self.profile is not None and not self.follow_default_profile
+                else None
+            ),
             action,
         )
         self.query_one("#body").display = False
@@ -558,6 +745,7 @@ class AnkiiApp(App[None]):
         names = list(self.settings.profiles)
         current = self.profile.name if self.profile is not None else names[0]
         next_index = (names.index(current) + 1) % len(names)
+        self.follow_default_profile = False
         self.requested_profile = names[next_index]
         self._refresh_dashboard()
         self.notify(f"Active profile: {self.requested_profile}")

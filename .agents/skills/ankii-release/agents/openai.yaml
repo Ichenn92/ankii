@@ -1,0 +1,4 @@
+interface:
+  display_name: "ankii Release"
+  short_description: "Prepare verified, tagged ankii releases"
+  default_prompt: "Use $ankii-release to prepare and tag a new ankii release."

@@ -18,6 +18,8 @@ GENERIC_FIELD_DEFAULTS = {
     "lesson": "Lesson",
     "explanation": "AIExplanation",
     "image": "Image",
+    "target_audio": "Target Audio",
+    "example_audio": "Example Audio",
     "import_id": "Import ID",
 }
 
@@ -32,6 +34,8 @@ FIELD_DEFAULTS = {
     "lesson": "Lesson",
     "explanation": "AIExplanation",
     "image": "Image",
+    "target_audio": "Target Audio",
+    "example_audio": "Example Audio",
     "import_id": "Import ID",
 }
 
@@ -44,6 +48,8 @@ FIELD_ALIASES = {
     "lesson": ("Lesson", "Unit"),
     "explanation": ("AIExplanation", "Notes", "Note"),
     "image": ("Image", "Visual Media", "Picture"),
+    "target_audio": ("Target Audio", "Audio", "Word Audio"),
+    "example_audio": ("Example Audio", "Sentence Audio"),
     "import_id": ("Import ID", "ImportID"),
 }
 
@@ -118,6 +124,8 @@ def build_note(
     for current, legacy in compatibility.items():
         if current not in field_names and legacy in field_names:
             field_names[current] = field_names[legacy]
+    field_names.setdefault("target_audio", GENERIC_FIELD_DEFAULTS["target_audio"])
+    field_names.setdefault("example_audio", GENERIC_FIELD_DEFAULTS["example_audio"])
     for key in ("target", "native"):
         if field_names[key] not in available_fields:
             raise ValueError(f"Note type {model!r} has no field named {field_names[key]!r}.")
@@ -145,6 +153,8 @@ def build_note(
         "lesson": lesson.get("title", ""),
         "explanation": card.get("ai_explanation", ""),
         "image": "",
+        "target_audio": "",
+        "example_audio": "",
         "import_id": card.get("import_id", ""),
     }
     fields = {

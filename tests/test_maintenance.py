@@ -142,7 +142,7 @@ def test_reimport_skips_duplicate_review_records(monkeypatch, tmp_path: Path) ->
     assert stats["ambiguous"] == 2
 
 
-def test_reimport_updates_tone_recap_and_vocabulary(monkeypatch, tmp_path: Path) -> None:
+def test_reimport_updates_embedded_tone_family_on_vocabulary(monkeypatch, tmp_path: Path) -> None:
     forms = tone_variants("ma")
     family = ToneFamily(
         "ma",
@@ -183,11 +183,14 @@ def test_reimport_updates_tone_recap_and_vocabulary(monkeypatch, tmp_path: Path)
         maintenance,
         "invoke",
         lambda action, **_kwargs: (
-            ["Vietnamese", "English", "Source"] if action == "modelFieldNames" else None
+            ["Vietnamese", "English", "Source", "Related Words"]
+            if action == "modelFieldNames"
+            else None
         ),
     )
 
     changes, stats = maintenance.prepare_reimport(tmp_path, "Vocabulary", "Vietnamese")
 
-    assert {change["id"] for change in changes} == {7, 9}
-    assert stats["matched"] == 2
+    assert {change["id"] for change in changes} == {7}
+    assert stats["matched"] == 1
+    assert "related-words-table" in changes[0]["fields"]["Related Words"]

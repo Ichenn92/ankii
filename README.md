@@ -29,6 +29,24 @@ pipx ensurepath
 pipx install "ankii[ai] @ git+https://github.com/Ichenn92/ankii.git@main"
 ```
 
+## Update
+
+Install updates from the public repository with:
+
+```bash
+pipx upgrade ankii
+```
+
+`pipx` remembers the Git source used during installation. If a release needs to be
+downloaded again, including one published without a version change, use:
+
+```bash
+pipx reinstall ankii
+```
+
+Updating the application does not remove settings, downloaded lessons, or reviews
+stored in the private per-user data directory described below.
+
 Install the AnkiConnect add-on in Anki Desktop and keep Anki open for commands that
 read or change the Anki collection.
 
@@ -39,6 +57,15 @@ Run `ankii` without a subcommand to open the full-screen terminal interface:
 ```bash
 ankii
 ```
+
+Check the installed version against GitHub, or upgrade the pipx installation explicitly:
+
+```bash
+ankii version
+ankii upgrade
+```
+
+Launching the terminal interface does not perform a network check.
 
 Choose actions with the arrow keys and Enter, or use the displayed shortcut keys. Each workflow
 opens in an embedded interactive console, including its prompts and safety confirmations. Press
@@ -102,12 +129,111 @@ analysis_min_level = "A1"
 analysis_max_level = "B2"
 ```
 
+Audio is opt-in per profile. This example generates one MP3 for the target word and one MP3
+containing all target-language example lines during import:
+
+```bash
+ankii audio setup
+```
+
+The guided command updates the active profile in `anki.toml` and prompts for the speech model,
+voice, accent preference, and additional instructions. The same values can be supplied with
+`--enable`, `--model`, `--voice`, `--accent`, and `--instructions` for scripting.
+
+```toml
+[profiles.vietnamese.audio]
+enabled = true
+provider = "openai"
+model = "gpt-4o-mini-tts"
+voice = "marin"
+language = ""
+accent = "Southern Vietnamese (Saigon)"
+instructions = "Speak clearly at a natural, learner-friendly pace."
+```
+
+To generate audio offline with a voice installed on this Mac, list the available voices and
+then run setup:
+
+```bash
+ankii audio voices --language Vietnamese
+ankii audio setup --enable --provider local
+```
+
+Local setup stores `provider = "local"`, `model = "macos-say"`, the selected voice, and its
+locale (for example `language = "vi_VN"`) in the profile's audio table. Generation uses the
+macOS `say` command and local `ffmpeg`; no study text is sent to OpenAI. Clips use the same
+deterministic MP3 cache and Anki fields as OpenAI-generated audio.
+
+Run `ankii anki setup-note-types` after enabling audio so Vocabulary has `Target Audio` and
+`Example Audio` fields. Audio generation begins only after the `IMPORT` confirmation and only
+for non-duplicate Vocabulary notes. MP3 files are cached under the active profile's `audio/`
+directory; changing the text, model, voice, accent, or instructions creates a new cache entry.
+OpenAI API charges apply. The voices are AI-generated and built-in voices are optimized for
+English, so verify regional pronunciation such as Southern Vietnamese by listening.
+
+Note-type setup also disables automatic audio playback for the active profile's deck while
+retaining Anki's replay controls. The target control is displayed beside the target text, and
+example controls are displayed inside the example box. Run setup again to migrate existing
+Vocabulary templates to this layout.
+
+To add audio to Vocabulary notes that already exist in Anki, run:
+
+```bash
+ankii backfill-audio
+```
+
+The command finds missing target-word and combined-example clips in the active profile's deck
+and asks for each one: `y` generates or reuses the cached clip, while `n` permanently suppresses
+that clip. Each audio field contains at most one sound reference. Any existing sound counts as
+complete even if the provider, model, language, voice, accent, or instructions later change.
+Declines are saved in the profile's `audio-skip.json`, so later runs do not ask again. For an
+empty field, changing the speech configuration makes a previously declined rendition eligible
+for review again.
+
 Select a profile for one command or a shell session:
 
 ```bash
 ankii --profile french add "bonjour"
 ANKI_PROFILE=french ankii analyze
 ```
+
+Create a profile interactively, or provide every value directly:
+
+```bash
+ankii profile create
+ankii profile create spanish --study-language Spanish --native-language English \
+  --deck Spanish --min-level A1 --max-level B2 --default
+```
+
+Interactive creation selects study and native languages from a validated list. Direct language
+flags are case-insensitive and reject unknown spellings. Omit the profile name to derive it from
+the study language automatically:
+
+```bash
+ankii profile languages
+ankii profile create --study-language Spanish --native-language English --deck Spanish
+# Creates the profile "spanish"
+```
+
+Set any existing profile as the default:
+
+```bash
+ankii profile default
+ankii profile default spanish
+```
+
+List profiles or delete one. Deletion preserves its review and archive files:
+
+```bash
+ankii profile list
+ankii profile delete spanish
+ankii profile delete spanish --yes
+ankii profile delete vietnamese --new-default spanish --yes
+```
+
+Deleting the current default requires a replacement profile. Without `--yes`, deletion asks you
+to type `DELETE` as confirmation. All profile actions are also available from the terminal
+dashboard.
 
 Selection precedence is `--profile`, then `ANKI_PROFILE`, then `default_profile`.
 Each profile has its own review directory and one enforced Anki deck.
@@ -134,27 +260,10 @@ workflow:
 ankii yhw wizard 313789981
 ```
 
-You can supply a complete YourHomework URL or omit the ID to be prompted. Individual
-steps are also available:
-
-```bash
-ankii yhw fetch 313789981
-ankii yhw review 313789981
-ankii tag /path/to/313789981.review.json
-ankii approve
-ankii import
-```
-
-`yhw fetch` stores raw downloads under the private data directory by default. Review
-and wizard commands store review JSON under the active profile. Explicit `--output`,
-`--inbox`, `--reviews`, and review-file arguments remain available.
-
-Learn Southern Vietnamese tone families:
-
-```bash
-ankii tones ma
-ankii import
-```
+You can supply a complete YourHomework URL or omit the ID to be prompted. The wizard
+stores review JSON under the active profile and resumes an existing review when run again.
+Explicit `--inbox`, `--reviews`, and review-file arguments remain available to the
+general review commands.
 
 Inspect Anki and set up the shared note types:
 
@@ -166,10 +275,14 @@ ankii anki fields Vocabulary
 ankii anki setup-note-types Vietnamese
 ```
 
+The shared note types use language-neutral fields: `Target`, `Native`, `Example Target`,
+`Example Native`, `Target Audio`, `Example Audio`, and the optional `Related Words`. `Source`
+remains reserved for citation titles and URLs. Setup migrates values from legacy `Vietnamese`,
+`English`, `Example VN`, and `Example EN` fields before removing those language-specific fields.
+
 Maintenance commands preview their changes and require explicit confirmation:
 
 ```bash
-ankii grammar-check --all --model Vocabulary --grammar-model Grammar
 ankii retag --all --model Vocabulary
 ankii reimport --all --model Vocabulary
 ```
@@ -180,9 +293,10 @@ confirmation `IMPORT`. Retagging and reimporting require `RETAG` and `REIMPORT`.
 ## Privacy and content
 
 Review files can contain study history, source titles and URLs, generated explanations,
-and Anki note identifiers. Keep them in the per-user data directory and do not commit
-them. The repository ignores `reviews/`, `anki.toml`, `.env`, downloads, exports, and
-temporary files.
+cached AI-generated speech, and Anki note identifiers. Text sent for speech generation is
+processed by the configured provider. Keep these files in the per-user data directory and do
+not commit them. The repository ignores `reviews/`, `anki.toml`, `.env`, downloads, exports,
+and temporary files.
 
 Only synthetic demonstration data belongs in `examples/`. Do not contribute copied
 lessons, course material, song lyrics, personal review archives, credentials, or Anki
@@ -198,6 +312,22 @@ python -m pip install -e ".[ai,dev]"
 pytest
 ruff check .
 ```
+
+To publish an update, first bump the version in `pyproject.toml` and
+`src/ankii/__init__.py`. Keep `main` release-ready because user installations track
+that branch, then test, commit, tag, and push the release:
+
+```bash
+pytest
+ruff check .
+git commit -m "Release 0.1.1"
+git tag -a v0.1.1 -m "Release 0.1.1"
+git push origin main
+git push origin v0.1.1
+```
+
+Before the commit, review the complete diff and stage only the files intended for the release.
+The repository-local `ankii-release` skill contains the complete release checklist.
 
 The installed command is `ankii`, matching the project and avoiding conflicts with Anki's
 own executable on systems where it is available on `PATH`.

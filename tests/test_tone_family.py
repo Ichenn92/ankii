@@ -6,8 +6,8 @@ from unittest.mock import patch
 import pytest
 
 from ankii.tone_family import (
+    RELATED_WORDS_FIELD,
     TONE_NAMES,
-    VOCABULARY_LINK_FIELD,
     ToneEntry,
     ToneFamily,
     ToneSense,
@@ -15,8 +15,9 @@ from ankii.tone_family import (
     build_tone_vocabulary_note,
     generate_tone_family,
     normalize_syllable,
+    related_words_html,
     setup_tone_family_model,
-    setup_vocabulary_tone_link,
+    setup_vocabulary_related_words,
     tone_family_fields,
     tone_family_from_review,
     tone_family_link,
@@ -237,7 +238,7 @@ def test_setup_refuses_unmanaged_name_collision(invoke) -> None:
         setup_tone_family_model()
 
 
-def test_build_vocabulary_note_is_self_contained_and_links_parent() -> None:
+def test_build_vocabulary_note_is_self_contained_and_embeds_family() -> None:
     family = _family()
     entry = family.entries[0]
     fields = {
@@ -248,14 +249,15 @@ def test_build_vocabulary_note_is_self_contained_and_links_parent() -> None:
         "AIExplanation",
         "Source",
         "Lesson",
-        VOCABULARY_LINK_FIELD,
+        RELATED_WORDS_FIELD,
     }
     note = build_tone_vocabulary_note(entry, family, "Vietnamese", "Vocabulary", fields, 123)
     assert note["fields"]["Vietnamese"] == "ma"
     assert "m&#" not in note["fields"]["English"]
-    assert "nid%3A123" in note["fields"][VOCABULARY_LINK_FIELD]
+    assert "related-words-table" in note["fields"][RELATED_WORDS_FIELD]
+    assert "related-word-current" in note["fields"][RELATED_WORDS_FIELD]
     assert "tone_family::ma" in note["tags"]
-    assert "mà" not in str(note["fields"])
+    assert "mà" in note["fields"][RELATED_WORDS_FIELD]
 
 
 def test_parent_link_is_ankimobile_search_link() -> None:
@@ -275,7 +277,7 @@ def test_tone_family_review_round_trip_contains_vocabulary_cards() -> None:
 
 
 @patch("ankii.tone_family.invoke")
-def test_setup_vocabulary_link_adds_field_and_managed_back_block(invoke) -> None:
+def test_setup_vocabulary_related_words_adds_field_and_managed_back_block(invoke) -> None:
     invoke.side_effect = [
         ["Vocabulary"],
         ["Vietnamese", "English"],
@@ -298,9 +300,23 @@ def test_setup_vocabulary_link_adds_field_and_managed_back_block(invoke) -> None
         },
         None,
     ]
-    setup_vocabulary_tone_link()
+    setup_vocabulary_related_words()
     assert any(item.args == ("modelFieldAdd",) for item in invoke.mock_calls)
     update = next(item for item in invoke.mock_calls if item.args == ("updateModelTemplates",))
     updated_back = update.kwargs["model"]["templates"]["Card"]["Back"]
-    assert "ankii tone-family link" in updated_back
+    assert "<summary>Related words</summary>" in updated_back
+    assert "{{#Related Words}}" in updated_back
     assert "yhw2anki tone-family link" not in updated_back
+
+
+def test_related_words_html_escapes_and_renders_full_family() -> None:
+    family = _family()
+    family.entries[1].usage_note = "rare <form>"
+    rendered = related_words_html(family, "ma")
+
+    assert rendered.count("<tr class=") == 6
+    assert "related-word-current" in rendered
+    assert "related-word-muted" in rendered
+    assert "ghost &amp; spirit" in rendered
+    assert "rare &lt;form&gt;" in rendered
+    assert "Southern Vietnamese" in rendered
