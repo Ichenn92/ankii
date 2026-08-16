@@ -18,6 +18,16 @@ from ankii.analyzer import (
     normalize_headword,
 )
 from ankii.anki import AnkiConnectError, invoke
+from ankii.audio import (
+    add_audio_skip,
+    attach_audio,
+    audio_enabled,
+    create_speech_client,
+    install_missing_audio,
+    load_audio_skips,
+    missing_audio,
+    save_audio_skips,
+)
 from ankii.commons import open_gallery, search_commons
 from ankii.grammar_check import (
     GrammarSuggestion,
@@ -76,17 +86,17 @@ from ankii.settings import (
 )
 from ankii.tagging import suggest_card_tags, suggest_example_sentence, tag_review
 from ankii.tone_family import (
+    RELATED_WORDS_FIELD,
     TONE_LABELS,
     VOCABULARY_LINK_FIELD,
     ToneFamily,
-    build_tone_family_note,
     build_tone_vocabulary_note,
     generate_tone_family,
     normalize_syllable,
-    setup_tone_family_model,
-    setup_vocabulary_tone_link,
+    related_words_html,
+    setup_vocabulary_related_words,
+    tone_family_from_anki_note,
     tone_family_from_review,
-    tone_family_link,
     tone_family_to_review,
 )
 from ankii.yourhomework import fetch_lesson
@@ -112,6 +122,9 @@ Run 'ankii COMMAND --help' for help with a specific command.""",
         help="Settings TOML (default: the per-user ankii data directory).",
     )
     commands = parser.add_subparsers(dest="command")
+
+    commands.add_parser("version", help="Show the installed and latest available versions.")
+    commands.add_parser("upgrade", help="Upgrade ankii using pipx.")
 
     setup_parser = commands.add_parser(
         "setup", help="Create local settings and securely configure the OpenAI API key."
@@ -176,24 +189,6 @@ Run 'ankii COMMAND --help' for help with a specific command.""",
         "text", nargs="?", help="Passage (read from stdin or prompted when omitted)."
     )
 
-    tones_parser = commands.add_parser(
-        "tones", help="Generate a Southern Vietnamese tone-family review JSON."
-    )
-    tones_parser.add_argument("syllable", help="One Vietnamese syllable, with or without tone.")
-    tones_parser.add_argument("--output", type=Path, help="Review JSON output path.")
-    tones_parser.add_argument(
-        "--model", default="ToneFamily", help="Anki note type (default: ToneFamily)."
-    )
-    tones_parser.add_argument(
-        "--vocabulary-model",
-        default="Vocabulary",
-        help="Vocabulary note type (default: Vocabulary).",
-    )
-    tones_parser.add_argument(
-        "--ai-model",
-        default=os.environ.get("OPENAI_MODEL", "gpt-5.6-sol"),
-        help="OpenAI model (default: OPENAI_MODEL or gpt-5.6-sol).",
-    )
     analyze_parser.add_argument("--source-title", default=None)
     analyze_parser.add_argument("--source-url", default=None)
     analyze_parser.add_argument("--inbox", type=Path, default=None)
@@ -214,18 +209,31 @@ Run 'ankii COMMAND --help' for help with a specific command.""",
         "fetch",
         help="Download and normalize a public yourhomework.net vocabulary lesson.",
     )
-    fetch_parser.add_argument("lesson", help="Numeric public ID or complete vocabulary URL.")
+    fetch_parser.add_argument(
+        "lesson",
+        nargs="?",
+        help="Numeric public ID or complete vocabulary URL (prompted when omitted).",
+    )
     fetch_parser.add_argument("--output", type=Path)
 
     review_parser = yhw_commands.add_parser(
         "review",
         help="Create a local review file from a yourhomework.net vocabulary lesson.",
     )
-    review_parser.add_argument("lesson", help="Numeric public ID or complete vocabulary URL.")
+    review_parser.add_argument(
+        "lesson",
+        nargs="?",
+        help="Numeric public ID or complete vocabulary URL (prompted when omitted).",
+    )
     review_parser.add_argument("--output", type=Path)
 
     tag_parser = commands.add_parser("tag", help="Add GPT tag suggestions to a review file.")
-    tag_parser.add_argument("review_file", type=Path)
+    tag_parser.add_argument(
+        "review_file",
+        nargs="?",
+        type=Path,
+        help="Review JSON (prompted from the active profile when omitted).",
+    )
     tag_parser.add_argument(
         "--model",
         default=os.environ.get("OPENAI_MODEL", "gpt-5.6-sol"),
@@ -262,7 +270,7 @@ Run 'ankii COMMAND --help' for help with a specific command.""",
     anki_commands.add_parser("decks", help="List decks.")
     anki_commands.add_parser("models", help="List note types.")
     fields_parser = anki_commands.add_parser("fields", help="List fields for a note type.")
-    fields_parser.add_argument("model")
+    fields_parser.add_argument("model", nargs="?", help="Note type (prompted when omitted).")
     setup_parser = anki_commands.add_parser(
         "setup-note-type",
         help="Add example fields, migrate legacy values, and update card backs.",
@@ -278,6 +286,13 @@ Run 'ankii COMMAND --help' for help with a specific command.""",
     )
     setup_models_parser.add_argument(
         "source", nargs="?", default=None, help="Existing language-specific vocabulary note type."
+    )
+    migrate_tones_parser = anki_commands.add_parser(
+        "migrate-tone-families",
+        help="Embed legacy ToneFamily recaps in Vocabulary notes and remove the recaps.",
+    )
+    migrate_tones_parser.add_argument(
+        "--tone-model", default="ToneFamily", help="Legacy recap note type (default: ToneFamily)."
     )
 
     import_parser = commands.add_parser(
@@ -313,7 +328,7 @@ epilog="""Examples:
     import_parser.add_argument(
         "--tone-model",
         default=None,
-        help="Note type for tone-family recap cards (default: saved value or ToneFamily).",
+        help=argparse.SUPPRESS,
     )
     for key, default in GENERIC_FIELD_DEFAULTS.items():
         import_parser.add_argument(
@@ -329,14 +344,31 @@ epilog="""Examples:
         "backfill-examples",
         help="Fill empty example fields on existing Anki notes from a review file.",
     )
-    backfill_parser.add_argument("review_file", type=Path)
-    backfill_parser.add_argument("--model", required=True)
+    backfill_parser.add_argument(
+        "review_file",
+        nargs="?",
+        type=Path,
+        help="Review JSON (prompted from the active profile when omitted).",
+    )
+    backfill_parser.add_argument(
+        "--model", help="Vocabulary note type (default: shared model from anki.toml)."
+    )
+
+    backfill_audio_parser = commands.add_parser(
+        "backfill-audio",
+        help="Interactively generate missing Vocabulary audio on existing Anki notes.",
+    )
+    backfill_audio_parser.add_argument(
+        "--model", help="Vocabulary note type (default: shared model from anki.toml)."
+    )
 
     retag_parser = commands.add_parser(
         "retag", help="Recalculate taxonomy tags on every note of an Anki note type."
     )
     retag_parser.add_argument("--all", action="store_true", required=True)
-    retag_parser.add_argument("--model", required=True, help="Exact Anki note type name.")
+    retag_parser.add_argument(
+        "--model", help="Anki note type (default: shared Vocabulary model from anki.toml)."
+    )
     retag_parser.add_argument("--ai-model", default=os.environ.get("OPENAI_MODEL", "gpt-5.6-sol"))
 
     reimport_parser = commands.add_parser(
@@ -347,18 +379,6 @@ epilog="""Examples:
     reimport_parser.add_argument("--model")
     reimport_parser.add_argument("--deck", default=None, help=argparse.SUPPRESS)
 
-    grammar_parser = commands.add_parser(
-        "grammar-check",
-        help="Find grammar in Vocabulary examples that is missing from Grammar.",
-    )
-    grammar_parser.add_argument("--all", action="store_true", required=True)
-    grammar_parser.add_argument("--model", default=None)
-    grammar_parser.add_argument("--grammar-model", default=None)
-    grammar_parser.add_argument("--deck", default=None, help=argparse.SUPPRESS)
-    grammar_parser.add_argument("--ai-model", default=os.environ.get("OPENAI_MODEL", "gpt-5.6-sol"))
-    grammar_parser.add_argument(
-        "--ignore-file", type=Path, default=None
-    )
     return parser
 
 
@@ -369,7 +389,15 @@ def _language_argument(value: str) -> str:
         raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
-def run_fetch(lesson_value: str, output: Path | None) -> int:
+def _resolve_lesson(lesson_value: str | None) -> str:
+    value = lesson_value or input("YourHomework lesson ID or URL: ").strip()
+    if not value:
+        raise ValueError("A lesson ID or URL is required.")
+    return value
+
+
+def run_fetch(lesson_value: str | None, output: Path | None) -> int:
+    lesson_value = _resolve_lesson(lesson_value)
     lesson = fetch_lesson(lesson_value)
     output_path = output or data_root() / "downloads" / f"lesson-{lesson.public_id}.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -384,8 +412,9 @@ def run_fetch(lesson_value: str, output: Path | None) -> int:
 
 
 def run_review(
-    lesson_value: str, output: Path | None, profile: LanguageProfile = DEFAULT_PROFILE
+    lesson_value: str | None, output: Path | None, profile: LanguageProfile = DEFAULT_PROFILE
 ) -> int:
+    lesson_value = _resolve_lesson(lesson_value)
     lesson = fetch_lesson(lesson_value)
     output_path = output or profile.review_root / f"{lesson.public_id}.review.json"
     if output_path.exists():
@@ -463,7 +492,10 @@ def run_anki(
         print("\n".join(invoke("deckNames")))
     elif command == "models":
         print("\n".join(invoke("modelNames")))
-    elif command == "fields" and model is not None:
+    elif command == "fields":
+        if model is None:
+            models = sorted(invoke("modelNames"), key=str.casefold)
+            model = _choose("note type", models, vocabulary_model)
         print("\n".join(invoke("modelFieldNames", modelName=model)))
     elif command == "setup-note-type" and model is not None:
         print(
@@ -510,7 +542,10 @@ def run_anki(
         print(f"Vocabulary notes migrated: {result['notes_migrated']}")
         print(f"Grammar model created: {result['grammar_created']}")
         print(f"Profile deck: {profile.deck}")
-        print("Vocabulary fields: Target, Native, Example Target, Example Native")
+        print(
+            "Vocabulary fields: Target, Native, Example Target, Example Native, "
+            "Target Audio, Example Audio, Related Words"
+        )
         print("The original source note type is left empty and can be removed in Anki.")
     return 0
 
@@ -710,6 +745,19 @@ def _resolve_approve_file(
         raise ValueError(f"No reviews with pending cards were found for profile {profile.name!r}.")
     selected = _choose("review file", [str(candidate) for candidate in candidates])
     return Path(selected)
+
+
+def _resolve_review_file(
+    path: Path | None, profile: LanguageProfile = DEFAULT_PROFILE
+) -> Path:
+    if path is not None:
+        return path
+    candidates = _available_profile_review_files(profile)
+    if not candidates and profile == DEFAULT_PROFILE:
+        candidates = _available_review_files()
+    if not candidates:
+        raise ValueError(f"No review files were found for profile {profile.name!r}.")
+    return Path(_choose("review file", [str(candidate) for candidate in candidates]))
 
 
 def _available_review_roots() -> list[Path]:
@@ -1243,9 +1291,9 @@ def _display_tone_actions(family: ToneFamily, existing: dict[str, dict[str, obje
     print("\nPlanned Anki changes")
     for entry in family.entries:
         if not entry.common:
-            action = "recap only"
+            action = "shown as uncommon in Related words"
         elif entry.form in existing:
-            action = "link existing Vocabulary note"
+            action = "update existing Vocabulary note"
         else:
             action = "add new Vocabulary note"
         print(f"  {entry.form:<10} {action}")
@@ -1289,6 +1337,7 @@ def run_tone_import(
     vocabulary_model: str,
     review_path: Path | None = None,
 ) -> int:
+    del model  # Legacy recap-model argument; new imports are vocabulary-only.
     base = family.base
     decks = sorted(invoke("deckNames"), key=str.casefold)
     if deck is None:
@@ -1303,11 +1352,6 @@ def run_tone_import(
             f"Anki vocabulary note type {vocabulary_model!r} does not exist. "
             "Run 'ankii anki setup-note-types' first."
         )
-    if model in models:
-        duplicates = invoke("findNotes", query=f'note:"{model}" Base:"{base}"')
-        if duplicates:
-            raise ValueError(f"Tone family {base!r} already exists in note type {model!r}.")
-
     vocabulary_fields = set(invoke("modelFieldNames", modelName=vocabulary_model))
     vocabulary_mapping = infer_field_names(list(vocabulary_fields))
     for required in ("target", "native"):
@@ -1338,18 +1382,21 @@ def run_tone_import(
         if exact:
             existing[entry.form] = exact[0]
 
-    new_entries = [entry for entry in family.entries if entry.common and entry.form not in existing]
-    preflight_fields = vocabulary_fields | {VOCABULARY_LINK_FIELD}
+    common_entries = [entry for entry in family.entries if entry.common]
+    if not common_entries:
+        raise ValueError(f"Tone family {base!r} has no common forms to embed in Vocabulary notes.")
+    new_entries = [entry for entry in common_entries if entry.form not in existing]
+    preflight_fields = vocabulary_fields | {RELATED_WORDS_FIELD}
     preflight_notes = [
-        build_tone_vocabulary_note(entry, family, deck, vocabulary_model, preflight_fields, 1)
+        build_tone_vocabulary_note(entry, family, deck, vocabulary_model, preflight_fields)
         for entry in new_entries
     ]
     if preflight_notes:
         check_notes = []
         for note in preflight_notes:
             check = {**note, "fields": dict(note["fields"])}
-            if VOCABULARY_LINK_FIELD not in vocabulary_fields:
-                check["fields"].pop(VOCABULARY_LINK_FIELD, None)
+            if RELATED_WORDS_FIELD not in vocabulary_fields:
+                check["fields"].pop(RELATED_WORDS_FIELD, None)
             check_notes.append(check)
         can_add = invoke("canAddNotes", notes=check_notes)
         if can_add != [True] * len(check_notes):
@@ -1357,8 +1404,8 @@ def run_tone_import(
 
     _display_tone_actions(family, existing)
     print(
-        f"\nReady: 1 {model} recap, {len(new_entries)} new {vocabulary_model} notes, "
-        f"{len(existing)} existing {vocabulary_model} notes linked in {deck!r}."
+        f"\nReady: {len(new_entries)} new {vocabulary_model} notes and "
+        f"{len(existing)} existing {vocabulary_model} notes updated in {deck!r}."
     )
     if input("Type IMPORT to continue: ").strip() != "IMPORT":
         print("Cancelled. Anki was not changed.")
@@ -1367,19 +1414,10 @@ def run_tone_import(
     created_ids: list[int] = []
     updated_existing: list[tuple[int, str, list[str]]] = []
     try:
-        created = setup_tone_family_model(model)
-        setup_vocabulary_tone_link(vocabulary_model)
-        family_note = build_tone_family_note(family, deck, model)
-        parent_id = invoke("addNote", request_timeout=180, note=family_note)
-        if not isinstance(parent_id, int):
-            raise RuntimeError("AnkiConnect did not return the ToneFamily note ID.")
-        created_ids.append(parent_id)
-
-        final_fields = vocabulary_fields | {VOCABULARY_LINK_FIELD}
+        setup_vocabulary_related_words(vocabulary_model)
+        final_fields = vocabulary_fields | {RELATED_WORDS_FIELD}
         new_notes = [
-            build_tone_vocabulary_note(
-                entry, family, deck, vocabulary_model, final_fields, parent_id
-            )
+            build_tone_vocabulary_note(entry, family, deck, vocabulary_model, final_fields)
             for entry in new_entries
         ]
         if new_notes:
@@ -1396,7 +1434,7 @@ def run_tone_import(
                 continue
             note = existing[entry.form]
             note_id = int(note["noteId"])
-            old_field = str(note.get("fields", {}).get(VOCABULARY_LINK_FIELD, {}).get("value", ""))
+            old_field = str(note.get("fields", {}).get(RELATED_WORDS_FIELD, {}).get("value", ""))
             old_tags = list(note.get("tags", []))
             added_tags = [tag for tag in family_tags if tag not in old_tags]
             updated_existing.append((note_id, old_field, added_tags))
@@ -1404,7 +1442,7 @@ def run_tone_import(
                 "updateNoteFields",
                 note={
                     "id": note_id,
-                    "fields": {VOCABULARY_LINK_FIELD: tone_family_link(base, parent_id)},
+                    "fields": {RELATED_WORDS_FIELD: related_words_html(family, entry.form)},
                 },
             )
             if added_tags:
@@ -1415,7 +1453,7 @@ def run_tone_import(
             try:
                 invoke(
                     "updateNoteFields",
-                    note={"id": note_id, "fields": {VOCABULARY_LINK_FIELD: old_field}},
+                    note={"id": note_id, "fields": {RELATED_WORDS_FIELD: old_field}},
                 )
                 if added_tags:
                     invoke("removeTags", notes=[note_id], tags=" ".join(added_tags))
@@ -1429,15 +1467,127 @@ def run_tone_import(
         if rollback_errors:
             raise RuntimeError(f"{exc} Rollback also failed: {'; '.join(rollback_errors)}") from exc
         raise
-    action = "Created" if created else "Updated"
     print(
-        f"{action} {model!r}; added recap note {parent_id}, {len(new_entries)} Vocabulary "
-        f"notes, and linked {len(existing)} existing notes."
+        f"Embedded tone family {base!r}; added {len(new_entries)} Vocabulary notes and "
+        f"updated {len(existing)} existing notes."
     )
     if review_path is not None:
         archive_path = archive_completed_review(review_path)
         if archive_path is not None:
             print(f"Archived: {archive_path}")
+    return 0
+
+
+def run_tone_migration(
+    vocabulary_model: str,
+    tone_model: str = "ToneFamily",
+) -> int:
+    """Embed all legacy recap notes, then remove their notes and link field."""
+
+    models = list(invoke("modelNames"))
+    if tone_model not in models:
+        raise ValueError(f"Legacy tone-family note type {tone_model!r} does not exist.")
+    if vocabulary_model not in models:
+        raise ValueError(f"Vocabulary note type {vocabulary_model!r} does not exist.")
+
+    vocabulary_fields = list(invoke("modelFieldNames", modelName=vocabulary_model))
+    target_field = infer_field_names(vocabulary_fields)["target"]
+    parent_ids = invoke("findNotes", query=f'note:"{tone_model}"')
+    parents = invoke("notesInfo", notes=parent_ids) if parent_ids else []
+    if not parents:
+        print(f"No legacy tone-family notes found in {tone_model!r}.")
+        return 0
+
+    planned: list[tuple[ToneFamily, dict[str, object], dict[str, dict[str, object]]]] = []
+    problems: list[str] = []
+    for parent in parents:
+        try:
+            family = tone_family_from_anki_note(parent)
+        except ValueError as exc:
+            problems.append(f"note {parent.get('noteId')}: {exc}")
+            continue
+        matches: dict[str, dict[str, object]] = {}
+        escaped_base = family.base.replace('"', '\\"')
+        for entry in family.entries:
+            if not entry.common:
+                continue
+            note_ids = invoke(
+                "findNotes",
+                query=(
+                    f'note:"{vocabulary_model}" tag:"tone_family::{escaped_base}" '
+                    f'"{target_field}:{entry.form}"'
+                ),
+            )
+            candidates = invoke("notesInfo", notes=note_ids) if note_ids else []
+            exact = []
+            for note in candidates:
+                raw = note.get("fields", {}).get(target_field, {})
+                value = raw.get("value", "") if isinstance(raw, dict) else ""
+                if unicodedata.normalize("NFC", html.unescape(str(value)).strip()) == entry.form:
+                    exact.append(note)
+            if len(exact) != 1:
+                problems.append(
+                    f"{family.base}/{entry.form}: expected one tagged {vocabulary_model} note, "
+                    f"found {len(exact)}"
+                )
+            else:
+                matches[entry.form] = exact[0]
+        planned.append((family, parent, matches))
+
+    if problems:
+        print("Migration preflight failed; no changes were made:")
+        for problem in problems:
+            print(f"  {problem}")
+        return 1
+
+    vocabulary_count = sum(len(matches) for _family, _parent, matches in planned)
+    print(f"Legacy tone families: {len(planned)}")
+    print(f"Vocabulary notes to update: {vocabulary_count}")
+    print(f"Recap notes to delete: {len(parents)}")
+    if input("Type MIGRATE to continue: ").strip() != "MIGRATE":
+        print("Migration cancelled. No changes were made.")
+        return 0
+
+    setup_vocabulary_related_words(vocabulary_model)
+    updated: list[tuple[int, str]] = []
+    try:
+        for family, _parent, matches in planned:
+            for entry in family.entries:
+                if not entry.common:
+                    continue
+                note = matches[entry.form]
+                note_id = int(note["noteId"])
+                raw = note.get("fields", {}).get(RELATED_WORDS_FIELD, {})
+                old_value = str(raw.get("value", "")) if isinstance(raw, dict) else ""
+                invoke(
+                    "updateNoteFields",
+                    note={
+                        "id": note_id,
+                        "fields": {RELATED_WORDS_FIELD: related_words_html(family, entry.form)},
+                    },
+                )
+                updated.append((note_id, old_value))
+    except Exception:
+        for note_id, old_value in reversed(updated):
+            invoke(
+                "updateNoteFields",
+                note={"id": note_id, "fields": {RELATED_WORDS_FIELD: old_value}},
+            )
+        raise
+
+    invoke("deleteNotes", notes=[int(parent["noteId"]) for parent in parents])
+    refreshed_fields = list(invoke("modelFieldNames", modelName=vocabulary_model))
+    if VOCABULARY_LINK_FIELD in refreshed_fields:
+        invoke(
+            "modelFieldRemove",
+            modelName=vocabulary_model,
+            fieldName=VOCABULARY_LINK_FIELD,
+        )
+    print(f"Migrated {len(planned)} tone families into {vocabulary_count} Vocabulary notes.")
+    print(
+        f"In Anki, open Tools → Manage Note Types and delete the now-empty {tone_model!r} "
+        "note type."
+    )
     return 0
 
 
@@ -1554,7 +1704,15 @@ def run_import(
         "example_native": getattr(args, "field_example_en", None),
         **{
             key: getattr(args, f"field_{key}", None)
-            for key in ("source", "lesson", "explanation", "image", "import_id")
+            for key in (
+                "source",
+                "lesson",
+                "explanation",
+                "image",
+                "target_audio",
+                "example_audio",
+                "import_id",
+            )
         },
     }
     configured_fields = {
@@ -1577,6 +1735,35 @@ def run_import(
         getattr(args, "grammar_model", None) or "Grammar",
     )
     ready = [note for note, allowed in zip(notes, can_add, strict=True) if allowed]
+    approved_cards = [
+        card for card in review["cards"] if card["approved"] and not card["skip"]
+    ]
+    ready_pairs = [
+        (note, card)
+        for note, card, allowed in zip(notes, approved_cards, can_add, strict=True)
+        if allowed
+    ]
+    vocabulary_audio_pairs = [
+        (note, card) for note, card in ready_pairs if note.get("modelName") == args.model
+    ]
+    audio_client = None
+    if audio_enabled(profile) and vocabulary_audio_pairs:
+        required_audio_fields = {
+            field_names["target_audio"],
+            field_names["example_audio"],
+        }
+        missing_audio_fields = {
+            field
+            for field in required_audio_fields
+            if any(field not in note.get("fields", {}) for note, _card in vocabulary_audio_pairs)
+        }
+        if missing_audio_fields:
+            raise ValueError(
+                f"Vocabulary note type {args.model!r} is missing audio fields: "
+                f"{', '.join(sorted(missing_audio_fields))}. "
+                "Run 'ankii anki setup-note-types' first."
+            )
+        audio_client = create_speech_client(profile)
     blocked = len(notes) - len(ready)
     skipped = sum(1 for card in review["cards"] if card["skip"])
     note_type_counts = Counter(str(note.get("modelName", args.model)) for note in notes)
@@ -1588,6 +1775,11 @@ def run_import(
     print(f"Ready to import:  {len(ready)}")
     print(f"Blocked/duplicate:{blocked:>3}")
     print(f"Skipped:          {skipped}")
+    if audio_client is not None:
+        print(
+            "Audio:            OpenAI-generated voice; pronunciation and accent should be "
+            "reviewed by the learner."
+        )
     if not ready:
         print("Nothing to import; all approved cards already exist or are blocked by Anki.")
         archive_path = archive_completed_review(args.review_file)
@@ -1599,6 +1791,23 @@ def run_import(
     if confirmation != "IMPORT":
         print("Import cancelled. No notes were added.")
         return 0
+
+    if audio_client is not None:
+        audio_result = attach_audio(
+            vocabulary_audio_pairs,
+            profile,
+            field_names,
+            audio_client,
+        )
+        print(
+            f"Audio clips:     {audio_result.generated} generated, "
+            f"{audio_result.cached} cached, {len(audio_result.failures)} failed"
+        )
+        for failure in audio_result.failures:
+            print(
+                f"Warning: audio generation failed for {failure.text!r}: {failure.error}",
+                file=sys.stderr,
+            )
 
     result = add_notes(ready)
     added = sum(note_id is not None for note_id in result)
@@ -1653,6 +1862,79 @@ def run_backfill(
     print(f"Notes updated:   {result['notes_updated']}")
     print(f"Ambiguous words: {result['ambiguous_words']}")
     return 0
+
+
+def run_audio_backfill(
+    model: str, profile: LanguageProfile = DEFAULT_PROFILE
+) -> int:
+    if not audio_enabled(profile):
+        raise ValueError(
+            f"Audio generation is not enabled for profile {profile.name!r}. "
+            "Add [profiles.<name>.audio] to anki.toml first."
+        )
+    skipped_audio = load_audio_skips(profile.audio_skip_path)
+    candidates, previously_skipped = missing_audio(model, profile, set(skipped_audio))
+    print(f"Missing audio:    {len(candidates)}")
+    print(f"Never ask again:  {previously_skipped}")
+    if not candidates:
+        print("No missing audio needs review.")
+        return 0
+
+    client = None
+    accepted: set[str] = set()
+    current_fields: dict[tuple[int, str], str] = {}
+    generated = cached = installed = declined = failed = 0
+    for candidate in candidates:
+        if candidate.filename in skipped_audio:
+            continue
+        key = (candidate.note_id, candidate.field)
+        current_fields.setdefault(key, candidate.existing_value)
+        if candidate.filename not in accepted:
+            print(f"\n{candidate.word} — {candidate.kind} audio")
+            print(f"  {candidate.text}")
+            while True:
+                choice = input(
+                    "[y] generate, [n] never ask again for this audio, [q] quit: "
+                ).strip().lower()
+                if choice in {"y", "yes", "n", "no", "q", "quit"}:
+                    break
+                print("Choose y, n, or q.")
+            if choice in {"q", "quit"}:
+                print("Stopped. Choices already made were preserved.")
+                break
+            if choice in {"n", "no"}:
+                skipped_audio = add_audio_skip(skipped_audio, candidate, profile)
+                save_audio_skips(profile.audio_skip_path, skipped_audio)
+                declined += 1
+                continue
+            accepted.add(candidate.filename)
+        if client is None:
+            client = create_speech_client(profile)
+        try:
+            updated, was_generated = install_missing_audio(
+                candidate,
+                profile,
+                client,
+                current_fields[key],
+            )
+        except Exception as exc:
+            failed += 1
+            print(
+                f"Warning: could not install audio for {candidate.text!r}: {exc}",
+                file=sys.stderr,
+            )
+            continue
+        current_fields[key] = updated
+        generated += int(was_generated)
+        cached += int(not was_generated)
+        installed += 1
+
+    print(f"Audio installed:  {installed}")
+    print(f"Clips generated:  {generated}")
+    print(f"Clips cached:     {cached}")
+    print(f"Never ask again:  {declined}")
+    print(f"Failed:           {failed}")
+    return 0 if failed == 0 else 1
 
 
 def run_retag(
@@ -1834,6 +2116,10 @@ def main() -> None:
             from ankii.tui import run_tui
 
             raise SystemExit(run_tui(args.settings, args.profile))
+        if args.command in {"version", "upgrade"}:
+            from ankii.update_check import check_version, upgrade
+
+            raise SystemExit(check_version() if args.command == "version" else upgrade())
         if args.command == "setup":
             raise SystemExit(run_setup(args.settings, skip_key=args.skip_key))
         if args.command == "key":
@@ -1846,14 +2132,15 @@ def main() -> None:
             raise ValueError(
                 "--deck is not supported; the active profile's configured deck is enforced."
             )
-        if args.command in {"tones", "yhw"} and not profile.is_vietnamese:
+        if args.command == "yhw" and not profile.is_vietnamese:
             raise ValueError(
                 f"{args.command!r} is available only for a Vietnamese study profile; "
                 f"active profile {profile.name!r} studies {profile.study_language}."
             )
         if (
             getattr(args, "model", None) is None
-            and args.command in {"import", "retag", "reimport", "grammar-check"}
+            and args.command
+            in {"import", "backfill-examples", "backfill-audio", "retag", "reimport"}
         ) or (args.command == "import" and args.model == "Vocabulary"):
             args.model = settings.vocabulary_model
         if getattr(args, "grammar_model", None) is None or (
@@ -1862,15 +2149,6 @@ def main() -> None:
             args.grammar_model = settings.grammar_model
         if args.command == "add":
             exit_code = run_add(args.word, args.inbox or profile.inbox_path, profile)
-        elif args.command == "tones":
-            exit_code = run_tones(
-                args.syllable,
-                args.output
-                or profile.review_root / "tone-families" / f"{args.syllable}.review.json",
-                args.model,
-                args.vocabulary_model,
-                args.ai_model,
-            )
         elif args.command == "analyze":
             exit_code = run_analyze(
                 args.text,
@@ -1887,8 +2165,9 @@ def main() -> None:
         elif args.command == "yhw" and args.yhw_command == "review":
             exit_code = run_review(args.lesson, args.output, profile)
         elif args.command == "tag":
-            count = tag_review(args.review_file, args.model, profile)
-            print(f"Tagged {count} cards in {args.review_file} using {args.model}.")
+            review_file = _resolve_review_file(args.review_file, profile)
+            count = tag_review(review_file, args.model, profile)
+            print(f"Tagged {count} cards in {review_file} using {args.model}.")
             exit_code = 0
         elif args.command == "approve":
             exit_code = run_approve(_resolve_approve_file(args.review_file, profile), profile)
@@ -1897,18 +2176,25 @@ def main() -> None:
                 args.lesson, profile, settings.vocabulary_model, settings.grammar_model
             )
         elif args.command == "anki":
-            selected_model = getattr(args, "model", None) or getattr(args, "source", None)
-            exit_code = run_anki(
-                args.anki_command,
-                selected_model,
-                profile,
-                settings.vocabulary_model,
-                settings.grammar_model,
-            )
+            if args.anki_command == "migrate-tone-families":
+                exit_code = run_tone_migration(settings.vocabulary_model, args.tone_model)
+            else:
+                selected_model = getattr(args, "model", None) or getattr(args, "source", None)
+                exit_code = run_anki(
+                    args.anki_command,
+                    selected_model,
+                    profile,
+                    settings.vocabulary_model,
+                    settings.grammar_model,
+                )
         elif args.command == "import":
             exit_code = run_import(args, profile)
         elif args.command == "backfill-examples":
-            exit_code = run_backfill(args.review_file, args.model, profile)
+            exit_code = run_backfill(
+                _resolve_review_file(args.review_file, profile), args.model, profile
+            )
+        elif args.command == "backfill-audio":
+            exit_code = run_audio_backfill(args.model, profile)
         elif args.command == "retag":
             exit_code = run_retag(args.model, args.ai_model, profile)
         elif args.command == "reimport":
@@ -1916,15 +2202,6 @@ def main() -> None:
                 args.reviews or profile.review_root, args.model, profile
             )
             exit_code = run_reimport_all(reviews, model, deck)
-        elif args.command == "grammar-check":
-            exit_code = run_grammar_check(
-                args.model,
-                args.grammar_model,
-                profile.deck,
-                args.ai_model,
-                args.ignore_file or profile.grammar_ignore_path,
-                profile,
-            )
         else:
             parser.error(f"Unknown command: {args.command}")
             return

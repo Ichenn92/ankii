@@ -110,6 +110,16 @@ def create_default_settings(path: Path | None = None) -> tuple[Path, bool]:
 
 
 @dataclass(frozen=True)
+class AudioSettings:
+    enabled: bool = False
+    provider: str = "openai"
+    model: str = "gpt-4o-mini-tts"
+    voice: str = "marin"
+    accent: str = ""
+    instructions: str = ""
+
+
+@dataclass(frozen=True)
 class LanguageProfile:
     name: str
     study_language: str
@@ -118,6 +128,7 @@ class LanguageProfile:
     analysis_min_level: str
     analysis_max_level: str
     review_base: Path = Path("reviews")
+    audio: AudioSettings | None = None
 
     @property
     def review_root(self) -> Path:
@@ -130,6 +141,14 @@ class LanguageProfile:
     @property
     def grammar_ignore_path(self) -> Path:
         return self.review_root / "grammar-ignore.json"
+
+    @property
+    def audio_cache_path(self) -> Path:
+        return self.review_root / "audio"
+
+    @property
+    def audio_skip_path(self) -> Path:
+        return self.review_root / "audio-skip.json"
 
     @property
     def language_tag(self) -> str:
@@ -169,6 +188,42 @@ def _required_string(table: dict[str, Any], key: str, context: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{context}.{key} must be a non-empty string.")
     return value.strip()
+
+
+def _audio_settings(raw: dict[str, Any], context: str) -> AudioSettings | None:
+    value = raw.get("audio")
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"{context}.audio must be a table.")
+    enabled = value.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ValueError(f"{context}.audio.enabled must be true or false.")
+    provider = value.get("provider", "openai")
+    model = value.get("model", "gpt-4o-mini-tts")
+    voice = value.get("voice", "marin")
+    accent = value.get("accent", "")
+    instructions = value.get("instructions", "")
+    for key, item in {
+        "provider": provider,
+        "model": model,
+        "voice": voice,
+    }.items():
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"{context}.audio.{key} must be a non-empty string.")
+    for key, item in {"accent": accent, "instructions": instructions}.items():
+        if not isinstance(item, str):
+            raise ValueError(f"{context}.audio.{key} must be a string.")
+    if provider.strip().casefold() != "openai":
+        raise ValueError(f"{context}.audio.provider must be 'openai'.")
+    return AudioSettings(
+        enabled=enabled,
+        provider="openai",
+        model=model.strip(),
+        voice=voice.strip(),
+        accent=accent.strip(),
+        instructions=instructions.strip(),
+    )
 
 
 def load_settings(path: Path | None = None) -> Settings:
@@ -218,6 +273,7 @@ def load_settings(path: Path | None = None) -> Settings:
             analysis_min_level=minimum,
             analysis_max_level=maximum,
             review_base=path.parent / "reviews",
+            audio=_audio_settings(raw, f"profiles.{name}"),
         )
     if default_profile not in profiles:
         raise ValueError(f"default_profile {default_profile!r} is not defined in profiles.")
@@ -371,14 +427,13 @@ def delete_profile(
         start = next(index for index, line in enumerate(lines) if line.strip() == header)
     except StopIteration as exc:
         raise ValueError(f"Could not locate the TOML table for profile {name!r}.") from exc
-    end = next(
-        (
-            index
-            for index in range(start + 1, len(lines))
-            if lines[index].lstrip().startswith("[")
-        ),
-        len(lines),
-    )
+    nested_prefix = f"[profiles.{name}."
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        section = lines[index].strip()
+        if section.startswith("[") and not section.startswith(nested_prefix):
+            end = index
+            break
     updated_text = "".join([*lines[:start], *lines[end:]]).rstrip() + "\n"
     if new_default is not None:
         updated_text = _replace_default_profile(updated_text, new_default)

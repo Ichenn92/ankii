@@ -6,9 +6,25 @@ from typing import Any
 
 from ankii.anki import invoke
 from ankii.review import load_review
+from ankii.tone_family import (
+    LEGACY_VOCABULARY_LINK_CSS_MARKERS,
+    LEGACY_VOCABULARY_LINK_MARKERS,
+    RELATED_WORDS_CSS,
+    RELATED_WORDS_CSS_END,
+    RELATED_WORDS_CSS_START,
+    RELATED_WORDS_END,
+    RELATED_WORDS_FIELD,
+    RELATED_WORDS_START,
+    RELATED_WORDS_TEMPLATE,
+    VOCABULARY_LINK_CSS_END,
+    VOCABULARY_LINK_CSS_START,
+    VOCABULARY_LINK_END,
+    VOCABULARY_LINK_START,
+)
 
 SOURCE_EXAMPLE_FIELDS = ("Example Target", "Example Native")
 EXAMPLE_FIELDS = SOURCE_EXAMPLE_FIELDS
+VOCABULARY_AUDIO_FIELDS = ("Target Audio", "Example Audio")
 LEGACY_EXAMPLE_FIELDS = ("Example VN", "Example EN")
 LEGACY_FIELDS = {
     "Example Target": ("Example VN", "ExampleVN", "Example", "Examples"),
@@ -18,6 +34,7 @@ EXAMPLE_MARKERS = ("<!-- ankii examples -->", "<!-- /ankii examples -->")
 SOURCE_MARKERS = ("<!-- ankii source -->", "<!-- /ankii source -->")
 EXAMPLE_CSS_MARKERS = ("/* ankii examples */", "/* /ankii examples */")
 SOURCE_CSS_MARKERS = ("/* ankii source */", "/* /ankii source */")
+TARGET_AUDIO_MARKERS = ("<!-- ankii target audio -->", "<!-- /ankii target audio -->")
 LEGACY_EXAMPLE_MARKERS = (
     "<!-- yhw2anki examples -->",
     "<!-- /yhw2anki examples -->",
@@ -36,10 +53,15 @@ EXAMPLE_TEMPLATE = """<!-- ankii examples -->
 {{#Example Target}}
 <div class="yhw-example">
   <div class="yhw-example-vn">{{Example Target}}</div>
+  {{#Example Audio}}<div class="yhw-example-audio">{{Example Audio}}</div>{{/Example Audio}}
   {{#Example Native}}<div class="yhw-example-en">{{Example Native}}</div>{{/Example Native}}
 </div>
 {{/Example Target}}
 <!-- /ankii examples -->"""
+
+TARGET_AUDIO_TEMPLATE = """<!-- ankii target audio -->
+{{#Target Audio}}<div class="yhw-target-audio">{{Target Audio}}</div>{{/Target Audio}}
+<!-- /ankii target audio -->"""
 
 SOURCE_TEMPLATE = r"""<!-- ankii source -->
 {{#Source}}
@@ -183,6 +205,13 @@ EXAMPLE_CSS = """/* ankii examples */
   font-size: 1.2em;
   line-height: 1.5;
 }
+.yhw-example-vn br, .yhw-example-en br {
+  display: block;
+  content: "";
+  margin: 10px 0;
+  border-top: 1px solid rgba(127, 127, 127, 0.28);
+}
+.yhw-target-audio, .yhw-example-audio { margin-top: 8px; }
 .yhw-example-en {
   margin-top: 6px;
   color: #777;
@@ -287,6 +316,12 @@ def _append_once(value: str, marker: str, addition: str) -> str:
     return f"{value.rstrip()}\n\n{addition}\n"
 
 
+def _append_examples_if_missing(value: str, fields: tuple[str, ...], addition: str) -> str:
+    if any(f"{{{{{field}}}}}" in value for field in fields):
+        return value
+    return _append_once(value, EXAMPLE_MARKERS[0], addition)
+
+
 def _remove_marked_block(value: str, start: str, end: str) -> str:
     while start in value and end in value:
         before, remainder = value.split(start, 1)
@@ -320,6 +355,11 @@ def setup_learning_models(
             "<!-- /yhw2anki everyday examples -->",
         ),
         LEGACY_EXAMPLE_MARKERS,
+        SOURCE_MARKERS,
+        LEGACY_SOURCE_MARKERS,
+        (RELATED_WORDS_START, RELATED_WORDS_END),
+        (VOCABULARY_LINK_START, VOCABULARY_LINK_END),
+        LEGACY_VOCABULARY_LINK_MARKERS,
     )
     obsolete_css_blocks = (
         (
@@ -332,11 +372,17 @@ def setup_learning_models(
             "/* /yhw2anki everyday examples */",
         ),
         LEGACY_EXAMPLE_CSS_MARKERS,
+        SOURCE_CSS_MARKERS,
+        LEGACY_SOURCE_CSS_MARKERS,
+        (RELATED_WORDS_CSS_START, RELATED_WORDS_CSS_END),
+        (VOCABULARY_LINK_CSS_START, VOCABULARY_LINK_CSS_END),
+        LEGACY_VOCABULARY_LINK_CSS_MARKERS,
     )
 
     def clean_template(value: str) -> str:
         for start, end in obsolete_template_blocks:
             value = _remove_marked_block(value, start, end)
+        value = _remove_marked_block(value, *TARGET_AUDIO_MARKERS)
         replacements = {
             "{{Vietnamese}}": "{{Target}}",
             "{{English}}": "{{Native}}",
@@ -375,21 +421,35 @@ def setup_learning_models(
         ]
         if "Import ID" not in fields:
             fields.append("Import ID")
+        for field in VOCABULARY_AUDIO_FIELDS:
+            if field not in fields:
+                fields.append(field)
+        if RELATED_WORDS_FIELD not in fields:
+            fields.append(RELATED_WORDS_FIELD)
         templates = invoke("modelTemplates", modelName=source_model)
         styling = invoke("modelStyling", modelName=source_model)
         cards = []
         for name, value in templates.items():
-            back = _append_once(
-                clean_template(value["Back"]),
-                "<!-- ankii examples -->",
-                EXAMPLE_TEMPLATE,
+            back = _append_examples_if_missing(
+                clean_template(value["Back"]), SOURCE_EXAMPLE_FIELDS, EXAMPLE_TEMPLATE
             )
             if "Source" in fields:
                 back = _append_once(back, "<!-- ankii source -->", SOURCE_TEMPLATE)
-            cards.append(
-                {"Name": name, "Front": clean_template(value["Front"]), "Back": back}
+            back = _append_once(back, RELATED_WORDS_START, RELATED_WORDS_TEMPLATE)
+            front = _append_once(
+                clean_template(value["Front"]), TARGET_AUDIO_MARKERS[0], TARGET_AUDIO_TEMPLATE
             )
+            cards.append({"Name": name, "Front": front, "Back": back})
         vocabulary_css = clean_css(str(styling.get("css", "")))
+        if "Source" in fields:
+            vocabulary_css = _append_once(
+                vocabulary_css, SOURCE_CSS_MARKERS[0], SOURCE_CSS
+            )
+        vocabulary_css = _append_once(
+            vocabulary_css,
+            RELATED_WORDS_CSS_START,
+            RELATED_WORDS_CSS,
+        )
         invoke(
             "createModel",
             modelName=vocabulary_model,
@@ -405,23 +465,29 @@ def setup_learning_models(
             vocabulary_model, vocabulary_fields
         )
         vocabulary_fields = invoke("modelFieldNames", modelName=vocabulary_model)
-        if "Import ID" not in vocabulary_fields:
-            invoke(
-                "modelFieldAdd", modelName=vocabulary_model, fieldName="Import ID"
-            )
+        for field in ("Import ID", *VOCABULARY_AUDIO_FIELDS, RELATED_WORDS_FIELD):
+            if field not in vocabulary_fields:
+                invoke("modelFieldAdd", modelName=vocabulary_model, fieldName=field)
+                vocabulary_fields.append(field)
         templates = invoke("modelTemplates", modelName=vocabulary_model)
         cleaned_templates: dict[str, dict[str, str]] = {}
         for name, template in templates.items():
             cleaned = dict(template)
             for side in ("Front", "Back"):
                 cleaned[side] = clean_template(cleaned[side])
-            cleaned["Back"] = _append_once(
-                cleaned["Back"], "<!-- ankii examples -->", EXAMPLE_TEMPLATE
+            cleaned["Front"] = _append_once(
+                cleaned["Front"], TARGET_AUDIO_MARKERS[0], TARGET_AUDIO_TEMPLATE
+            )
+            cleaned["Back"] = _append_examples_if_missing(
+                cleaned["Back"], SOURCE_EXAMPLE_FIELDS, EXAMPLE_TEMPLATE
             )
             if "Source" in vocabulary_fields:
                 cleaned["Back"] = _append_once(
                     cleaned["Back"], "<!-- ankii source -->", SOURCE_TEMPLATE
                 )
+            cleaned["Back"] = _append_once(
+                cleaned["Back"], RELATED_WORDS_START, RELATED_WORDS_TEMPLATE
+            )
             cleaned_templates[name] = cleaned
         if cleaned_templates != templates:
             invoke(
@@ -431,6 +497,11 @@ def setup_learning_models(
         styling = invoke("modelStyling", modelName=vocabulary_model)
         css = str(styling.get("css", ""))
         cleaned_css = clean_css(css)
+        if "Source" in vocabulary_fields:
+            cleaned_css = _append_once(cleaned_css, SOURCE_CSS_MARKERS[0], SOURCE_CSS)
+        cleaned_css = _append_once(
+            cleaned_css, RELATED_WORDS_CSS_START, RELATED_WORDS_CSS
+        )
         if cleaned_css != css:
             invoke(
                 "updateModelStyling",
@@ -577,7 +648,7 @@ def setup_note_type(model: str) -> dict[str, int]:
         )
 
     original_fields = list(invoke("modelFieldNames", modelName=model))
-    managed_fields = (*LEGACY_EXAMPLE_FIELDS, "Import ID")
+    managed_fields = (*LEGACY_EXAMPLE_FIELDS, *VOCABULARY_AUDIO_FIELDS, "Import ID")
     for field in managed_fields:
         if field not in original_fields:
             invoke("modelFieldAdd", modelName=model, fieldName=field)
@@ -618,11 +689,15 @@ def setup_note_type(model: str) -> dict[str, int]:
     changed_templates: dict[str, dict[str, str]] = {}
     for name, template in templates.items():
         updated = dict(template)
+        front = _remove_marked_block(template["Front"], *TARGET_AUDIO_MARKERS)
+        updated["Front"] = _append_once(
+            front, TARGET_AUDIO_MARKERS[0], TARGET_AUDIO_TEMPLATE
+        )
         back = template["Back"]
         for markers in (LEGACY_EXAMPLE_MARKERS, EXAMPLE_MARKERS):
             back = _remove_marked_block(back, *markers)
-        updated["Back"] = _append_once(
-            back, EXAMPLE_MARKERS[0], EXAMPLE_TEMPLATE
+        updated["Back"] = _append_examples_if_missing(
+            back, LEGACY_EXAMPLE_FIELDS, EXAMPLE_TEMPLATE
         )
         if "Source" in original_fields:
             for markers in (LEGACY_SOURCE_MARKERS, SOURCE_MARKERS):

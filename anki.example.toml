@@ -12,6 +12,14 @@ deck = "Vietnamese"
 analysis_min_level = "A1"
 analysis_max_level = "B2"
 
+[profiles.vietnamese.audio]
+enabled = true
+provider = "openai"
+model = "gpt-4o-mini-tts"
+voice = "marin"
+accent = "Southern Vietnamese (Saigon)"
+instructions = "Speak clearly at a natural, learner-friendly pace."
+
 [profiles.french]
 study_language = "French"
 native_language = "English"

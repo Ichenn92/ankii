@@ -41,6 +41,7 @@ class TuiAction:
     description: str
     needs_settings: bool = True
     vietnamese_only: bool = False
+    section: str = "Study"
 
 
 ACTIONS: tuple[TuiAction, ...] = (
@@ -67,6 +68,13 @@ ACTIONS: tuple[TuiAction, ...] = (
         "Open an existing review and approve or edit its cards.",
     ),
     TuiAction(
+        "tag",
+        "t",
+        "Tag a review",
+        ("tag",),
+        "Choose a review and add AI-generated taxonomy tags.",
+    ),
+    TuiAction(
         "wizard",
         "w",
         "YourHomework wizard",
@@ -75,12 +83,48 @@ ACTIONS: tuple[TuiAction, ...] = (
         vietnamese_only=True,
     ),
     TuiAction(
-        "tones",
-        "t",
-        "Vietnamese tone family",
-        ("tones",),
-        "Generate a Southern Vietnamese tone-family review.",
+        "yhw-fetch",
+        "f",
+        "Download YourHomework lesson",
+        ("yhw", "fetch"),
+        "Download and normalize a public YourHomework vocabulary lesson.",
         vietnamese_only=True,
+    ),
+    TuiAction(
+        "yhw-review",
+        "y",
+        "Create YourHomework review",
+        ("yhw", "review"),
+        "Create a local review file from a public YourHomework lesson.",
+        vietnamese_only=True,
+    ),
+    TuiAction(
+        "backfill-examples",
+        "b",
+        "Backfill examples",
+        ("backfill-examples",),
+        "Fill empty example fields on existing Vocabulary notes from a review.",
+    ),
+    TuiAction(
+        "backfill-audio",
+        "e",
+        "Generate missing audio",
+        ("backfill-audio",),
+        "Review missing Vocabulary audio and generate selected clips.",
+    ),
+    TuiAction(
+        "retag",
+        "g",
+        "Retag Vocabulary notes",
+        ("retag", "--all"),
+        "Preview and recalculate taxonomy tags on Vocabulary notes.",
+    ),
+    TuiAction(
+        "reimport",
+        "j",
+        "Reimport local reviews",
+        ("reimport", "--all"),
+        "Preview and update existing Anki notes from local review files.",
     ),
     TuiAction(
         "connection",
@@ -88,6 +132,15 @@ ACTIONS: tuple[TuiAction, ...] = (
         "Check Anki connection",
         ("anki", "status"),
         "Confirm that Anki Desktop and AnkiConnect are available.",
+        section="Anki",
+    ),
+    TuiAction(
+        "decks",
+        "1",
+        "List decks",
+        ("anki", "decks"),
+        "Inspect the decks currently available in Anki.",
+        section="Anki",
     ),
     TuiAction(
         "models",
@@ -95,6 +148,23 @@ ACTIONS: tuple[TuiAction, ...] = (
         "List note types",
         ("anki", "models"),
         "Inspect the note types currently available in Anki.",
+        section="Anki",
+    ),
+    TuiAction(
+        "fields",
+        "h",
+        "List note fields",
+        ("anki", "fields"),
+        "Choose a note type and list all of its fields.",
+        section="Anki",
+    ),
+    TuiAction(
+        "note-type",
+        "2",
+        "Set up one note type",
+        ("anki", "setup-note-type"),
+        "Choose and update a single existing note type.",
+        section="Anki",
     ),
     TuiAction(
         "note-types",
@@ -102,13 +172,24 @@ ACTIONS: tuple[TuiAction, ...] = (
         "Set up note types",
         ("anki", "setup-note-types"),
         "Create or migrate the managed Vocabulary and Grammar note types.",
+        section="Anki",
     ),
     TuiAction(
-        "grammar",
-        "g",
-        "Discover grammar",
-        ("grammar-check", "--all"),
-        "Find grammar patterns in vocabulary examples that are not yet cards.",
+        "migrate-tone-families",
+        "3",
+        "Migrate legacy tone families",
+        ("anki", "migrate-tone-families"),
+        "Embed legacy recap data in Vocabulary notes and remove recap notes.",
+        section="Anki",
+    ),
+    TuiAction(
+        "profile-languages",
+        "4",
+        "List supported languages",
+        ("profile", "languages"),
+        "Show languages accepted when creating a profile.",
+        needs_settings=False,
+        section="Profiles",
     ),
     TuiAction(
         "profile-create",
@@ -116,6 +197,7 @@ ACTIONS: tuple[TuiAction, ...] = (
         "Create a profile",
         ("profile", "create"),
         "Create a language profile and its private review directory.",
+        section="Profiles",
     ),
     TuiAction(
         "profile-default",
@@ -123,6 +205,7 @@ ACTIONS: tuple[TuiAction, ...] = (
         "Set default profile",
         ("profile", "default"),
         "Choose which profile is used when no profile is specified.",
+        section="Profiles",
     ),
     TuiAction(
         "profile-list",
@@ -130,6 +213,7 @@ ACTIONS: tuple[TuiAction, ...] = (
         "List profiles",
         ("profile", "list"),
         "Show every configured profile and the current default.",
+        section="Profiles",
     ),
     TuiAction(
         "profile-delete",
@@ -137,14 +221,52 @@ ACTIONS: tuple[TuiAction, ...] = (
         "Delete a profile",
         ("profile", "delete"),
         "Remove a profile configuration while preserving its review files.",
+        section="Profiles",
     ),
     TuiAction(
-        "key",
+        "version",
+        "v",
+        "Check for updates",
+        ("version",),
+        "Compare the installed ankii version with the latest version on GitHub.",
+        needs_settings=False,
+        section="Application",
+    ),
+    TuiAction(
+        "upgrade",
+        "z",
+        "Upgrade ankii",
+        ("upgrade",),
+        "Upgrade the pipx installation to the latest available ankii version.",
+        needs_settings=False,
+        section="Application",
+    ),
+    TuiAction(
+        "key-status",
         "k",
-        "Manage OpenAI key",
+        "Check OpenAI key",
         ("key", "status"),
         "Check whether an OpenAI API key is available.",
         needs_settings=False,
+        section="Application",
+    ),
+    TuiAction(
+        "key-set",
+        "5",
+        "Set OpenAI key",
+        ("key", "set"),
+        "Securely add or replace the OpenAI API key.",
+        needs_settings=False,
+        section="Application",
+    ),
+    TuiAction(
+        "key-delete",
+        "6",
+        "Delete OpenAI key",
+        ("key", "delete"),
+        "Delete the stored OpenAI API key from Keychain.",
+        needs_settings=False,
+        section="Application",
     ),
     TuiAction(
         "setup",
@@ -153,8 +275,31 @@ ACTIONS: tuple[TuiAction, ...] = (
         ("setup",),
         "Create local settings and optionally store an OpenAI API key.",
         needs_settings=False,
+        section="Application",
     ),
 )
+
+
+def _action_items() -> list[ListItem]:
+    items: list[ListItem] = []
+    current_section: str | None = None
+    for action in ACTIONS:
+        if action.section != current_section:
+            current_section = action.section
+            items.append(
+                ListItem(
+                    Label(action.section),
+                    classes="action-section",
+                    disabled=True,
+                )
+            )
+        items.append(
+            ListItem(
+                Label(f"{action.key}   {action.label}"),
+                id=f"action-{action.name}",
+            )
+        )
+    return items
 
 
 def command_argv(
@@ -422,6 +567,14 @@ class AnkiiApp(App[None]):
         padding: 0 1;
     }
 
+    ListItem.action-section {
+        height: 2;
+        padding: 1 1 0 1;
+        color: #8ecae6;
+        text-style: bold;
+        background: #171b21;
+    }
+
     ListItem.--highlight {
         background: #3a86ff;
         color: white;
@@ -494,16 +647,7 @@ class AnkiiApp(App[None]):
         with Horizontal(id="body"):
             with Vertical(id="sidebar"):
                 yield Static(self._profile_text(), id="profile")
-                yield ListView(
-                    *(
-                        ListItem(
-                            Label(f"{action.key}   {action.label}"),
-                            id=f"action-{action.name}",
-                        )
-                        for action in ACTIONS
-                    ),
-                    id="actions",
-                )
+                yield ListView(*_action_items(), id="actions")
             with Vertical(id="main"):
                 yield Static("One terminal for your complete Anki workflow", id="welcome")
                 yield Static(ACTIONS[0].description, id="details")

@@ -131,14 +131,69 @@ def test_setup_learning_models_clones_migrates_and_creates_grammar(invoke) -> No
         "Target",
         "Native",
         "Import ID",
+        "Target Audio",
+        "Example Audio",
+        "Related Words",
     ]
+    assert "{{Target Audio}}" in vocabulary_call.kwargs["cardTemplates"][0]["Front"]
+    assert "{{Example Audio}}" in vocabulary_call.kwargs["cardTemplates"][0]["Back"]
     assert "everyday examples" not in vocabulary_call.kwargs["cardTemplates"][0]["Back"]
     assert vocabulary_call.kwargs["cardTemplates"][0]["Back"].count(
         "<!-- ankii examples -->"
     ) == 1
     assert "yhw2anki examples" not in vocabulary_call.kwargs["cardTemplates"][0]["Back"]
     assert "{{Example Target}}" in vocabulary_call.kwargs["cardTemplates"][0]["Back"]
+    assert "<summary>Related words</summary>" in vocabulary_call.kwargs["cardTemplates"][0]["Back"]
+    assert "ankii related-words" in vocabulary_call.kwargs["css"]
     assert "ankii examples" not in vocabulary_call.kwargs["css"]
+
+
+@patch("ankii.note_type.invoke")
+def test_setup_learning_models_replaces_duplicate_source_blocks_with_one(invoke) -> None:
+    invoke.side_effect = [
+        ["Vietnamese"],
+        ["Vietnamese", "English", "Source"],
+        {
+            "Card": {
+                "Front": "{{English}}",
+                "Back": (
+                    "{{Vietnamese}}\n{{Example VN}}<br>{{Example EN}}\n"
+                    "<!-- yhw2anki source -->legacy<!-- /yhw2anki source -->\n"
+                    "<!-- ankii examples -->extra examples<!-- /ankii examples -->\n"
+                    "<!-- ankii source -->duplicate<!-- /ankii source -->"
+                ),
+            }
+        },
+        {
+            "css": (
+                ".card{}\n/* yhw2anki source */legacy/* /yhw2anki source */\n"
+                "/* ankii source */duplicate/* /ankii source */"
+            )
+        },
+        None,
+        [],
+        None,
+    ]
+
+    setup_learning_models()
+
+    vocabulary_call = next(
+        item
+        for item in invoke.mock_calls
+        if item.args == ("createModel",) and item.kwargs["modelName"] == "Vocabulary"
+    )
+    back = vocabulary_call.kwargs["cardTemplates"][0]["Back"]
+    css = vocabulary_call.kwargs["css"]
+    assert back.count("<!-- ankii source -->") == 1
+    assert "yhw2anki source" not in back
+    assert "legacy" not in back
+    assert "duplicate" not in back
+    assert "extra examples" not in back
+    assert back.count("{{Example Target}}") == 1
+    assert back.count("{{Example Native}}") == 1
+    assert "<!-- ankii examples -->" not in back
+    assert css.count("/* ankii source */") == 1
+    assert "yhw2anki source" not in css
 
 
 @patch("ankii.note_type.invoke")
@@ -146,6 +201,8 @@ def test_setup_adds_fields_migrates_without_overwrite_and_updates_templates(invo
     invoke.side_effect = [
         ["Vietnamese Vocabulary"],
         ["Vietnamese", "English", "Example"],
+        None,
+        None,
         None,
         None,
         None,
@@ -170,7 +227,7 @@ def test_setup_adds_fields_migrates_without_overwrite_and_updates_templates(invo
     result = setup_note_type("Vietnamese Vocabulary")
 
     assert result == {
-        "fields_added": 3,
+        "fields_added": 5,
         "notes_migrated": 1,
         "templates_updated": 1,
         "styling_updated": 1,
@@ -184,6 +241,12 @@ def test_setup_adds_fields_migrates_without_overwrite_and_updates_templates(invo
     assert add_vn in invoke.mock_calls
     assert add_en in invoke.mock_calls
     assert call(
+        "modelFieldAdd", modelName="Vietnamese Vocabulary", fieldName="Target Audio"
+    ) in invoke.mock_calls
+    assert call(
+        "modelFieldAdd", modelName="Vietnamese Vocabulary", fieldName="Example Audio"
+    ) in invoke.mock_calls
+    assert call(
         "updateNoteFields", note={"id": 10, "fields": {"Example VN": "Xin chào."}}
     ) in invoke.mock_calls
 
@@ -193,6 +256,8 @@ def test_setup_renders_source_on_vocabulary_card_back(invoke) -> None:
     invoke.side_effect = [
         ["Vietnamese Vocabulary"],
         ["Vietnamese", "English", "Source", "Example VN", "Example EN"],
+        None,
+        None,
         None,
         {
             "Card 1": {
@@ -236,6 +301,13 @@ def test_source_card_supports_service_icons_and_generic_open_link() -> None:
     assert ".yhw-source-card" in GRAMMAR_CSS
 
 
+def test_vocabulary_examples_have_multiline_dividers() -> None:
+    from ankii.note_type import EXAMPLE_CSS
+
+    assert ".yhw-example-vn br, .yhw-example-en br" in EXAMPLE_CSS
+    assert "border-top: 1px solid rgba(127, 127, 127, 0.28)" in EXAMPLE_CSS
+
+
 @patch("ankii.note_type.invoke")
 def test_setup_is_idempotent(invoke) -> None:
     invoke.side_effect = [
@@ -247,11 +319,13 @@ def test_setup_is_idempotent(invoke) -> None:
             "Example EN",
             "Everyday Example VN",
             "Everyday Example EN",
+            "Target Audio",
+            "Example Audio",
         ],
         None,
         {
             "Card 1": {
-                "Front": "front",
+                "Front": "front\n<!-- ankii target audio -->",
                 "Back": "<!-- ankii examples --> <!-- ankii everyday examples -->",
             }
         },

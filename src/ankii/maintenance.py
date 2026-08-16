@@ -121,46 +121,17 @@ def prepare_reimport(
     stats = {"files": 0, "cards": 0, "matched": 0, "missing": 0, "ambiguous": 0}
     change_by_id: dict[int, dict[str, Any]] = {}
     conflicted: set[int] = set()
-    tone_parents: dict[str, dict[str, list[dict[str, Any]]]] = {}
     for path in review_files(root):
         try:
             review = load_review(path)
         except (OSError, ValueError):
             continue
         stats["files"] += 1
+        family = None
         if review.get("review_kind") == "tone_family":
-            from ankii.tone_family import (
-                build_tone_family_note,
-                tone_family_from_review,
-            )
+            from ankii.tone_family import tone_family_from_review
 
             family = tone_family_from_review(review)
-            tone_model = str(review["tone_family"].get("tone_model", "ToneFamily"))
-            if tone_model not in tone_parents:
-                by_base: dict[str, list[dict[str, Any]]] = defaultdict(list)
-                for parent in notes_for_model(tone_model):
-                    by_base[_field_value(parent, "Base")].append(parent)
-                tone_parents[tone_model] = by_base
-            parents = tone_parents[tone_model][family.base]
-            if len(parents) == 1:
-                parent_id = int(parents[0]["noteId"])
-                desired_parent = build_tone_family_note(family, deck, tone_model)
-                if parent_id in change_by_id:
-                    change_by_id.pop(parent_id)
-                    stats["matched"] -= 1
-                    stats["ambiguous"] += 2
-                    conflicted.add(parent_id)
-                elif parent_id not in conflicted:
-                    change_by_id[parent_id] = {
-                        "id": parent_id,
-                        "word": family.base,
-                        "fields": desired_parent["fields"],
-                        "tags": desired_parent["tags"],
-                        "picture": None,
-                    }
-                    stats["matched"] += 1
-            elif len(parents) > 1:
-                stats["ambiguous"] += 1
         for card in review["cards"]:
             if card.get("skip"):
                 continue
@@ -193,9 +164,17 @@ def prepare_reimport(
                 stats["ambiguous"] += 2
                 conflicted.add(note_id)
                 continue
-            desired = build_note(
-                card, review["lesson"], deck, model, set(available_fields), field_names
-            )
+            if family is not None:
+                from ankii.tone_family import build_tone_vocabulary_note
+
+                entry = next(item for item in family.entries if item.form == card["word"])
+                desired = build_tone_vocabulary_note(
+                    entry, family, deck, model, set(available_fields)
+                )
+            else:
+                desired = build_note(
+                    card, review["lesson"], deck, model, set(available_fields), field_names
+                )
             change_by_id[note_id] = {
                 "id": note_id,
                 "word": card["word"],

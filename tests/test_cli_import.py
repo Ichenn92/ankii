@@ -2,10 +2,14 @@ import argparse
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from ankii import cli
+from ankii.audio import AudioFailure, AudioGenerationResult
 from ankii.cli import run_import
 from ankii.importer import FIELD_DEFAULTS
 from ankii.review import save_review
+from ankii.settings import AudioSettings, LanguageProfile
 from ankii.tone_family import (
     TONE_NAMES,
     ToneEntry,
@@ -119,6 +123,136 @@ def test_import_summary_lists_actual_mixed_note_types(tmp_path: Path, capsys) ->
 
     output = capsys.readouterr().out
     assert "Note types detected:\n  Vocabulary: 1\n  Grammar: 1" in output
+
+
+def test_import_generates_audio_after_confirmation_for_ready_vocabulary_only(
+    tmp_path: Path,
+) -> None:
+    cards = [
+        {"word": "one", "approved": True, "skip": False},
+        {"word": "grammar", "approved": True, "skip": False},
+        {"word": "duplicate", "approved": True, "skip": False},
+    ]
+    review = {"review_version": 2, "lesson": {}, "cards": cards}
+    vocabulary = {
+        "modelName": "Vocabulary",
+        "fields": {"Target Audio": "", "Example Audio": ""},
+    }
+    grammar = {"modelName": "Grammar", "fields": {}}
+    duplicate = {
+        "modelName": "Vocabulary",
+        "fields": {"Target Audio": "", "Example Audio": ""},
+    }
+    args = argparse.Namespace(
+        review_file=tmp_path / "review.json",
+        deck="Vietnamese",
+        model="Vocabulary",
+        grammar_model="Grammar",
+        **{f"field_{key}": value for key, value in FIELD_DEFAULTS.items()},
+    )
+    profile = LanguageProfile(
+        "vietnamese",
+        "Vietnamese",
+        "English",
+        "Vietnamese",
+        "A1",
+        "B2",
+        review_base=tmp_path / "reviews",
+        audio=AudioSettings(enabled=True),
+    )
+    client = object()
+
+    with (
+        patch(
+            "ankii.cli.prepare_import",
+            return_value=(review, [vocabulary, grammar, duplicate], [True, True, False]),
+        ),
+        patch("ankii.cli.create_speech_client", return_value=client),
+        patch(
+            "ankii.cli.attach_audio",
+            return_value=AudioGenerationResult(1, 0, (AudioFailure("bad", "failed"),)),
+        ) as generate,
+        patch("ankii.cli.add_notes", return_value=[101, 102]) as add,
+        patch("ankii.cli.archive_imported_cards", return_value=None),
+        patch("ankii.cli.archive_completed_review", return_value=None),
+        patch("builtins.input", return_value="IMPORT"),
+    ):
+        assert run_import(args, profile) == 0
+
+    assert generate.call_args.args[:2] == ([(vocabulary, cards[0])], profile)
+    add.assert_called_once_with([vocabulary, grammar])
+
+
+def test_audio_enabled_import_requires_audio_fields(tmp_path: Path) -> None:
+    review = {
+        "review_version": 2,
+        "lesson": {},
+        "cards": [{"word": "one", "approved": True, "skip": False}],
+    }
+    note = {"modelName": "Vocabulary", "fields": {"Target": "one"}}
+    args = argparse.Namespace(
+        review_file=tmp_path / "review.json",
+        deck="Vietnamese",
+        model="Vocabulary",
+        grammar_model="Grammar",
+        **{f"field_{key}": value for key, value in FIELD_DEFAULTS.items()},
+    )
+    profile = LanguageProfile(
+        "vietnamese",
+        "Vietnamese",
+        "English",
+        "Vietnamese",
+        "A1",
+        "B2",
+        audio=AudioSettings(enabled=True),
+    )
+
+    with (
+        patch("ankii.cli.prepare_import", return_value=(review, [note], [True])),
+        patch("ankii.cli.create_speech_client") as client,
+        pytest.raises(ValueError, match="missing audio fields"),
+    ):
+        run_import(args, profile)
+
+    client.assert_not_called()
+
+
+def test_cancelled_import_does_not_generate_audio(tmp_path: Path) -> None:
+    review = {
+        "review_version": 2,
+        "lesson": {},
+        "cards": [{"word": "one", "approved": True, "skip": False}],
+    }
+    note = {
+        "modelName": "Vocabulary",
+        "fields": {"Target Audio": "", "Example Audio": ""},
+    }
+    args = argparse.Namespace(
+        review_file=tmp_path / "review.json",
+        deck="Vietnamese",
+        model="Vocabulary",
+        grammar_model="Grammar",
+        **{f"field_{key}": value for key, value in FIELD_DEFAULTS.items()},
+    )
+    profile = LanguageProfile(
+        "vietnamese",
+        "Vietnamese",
+        "English",
+        "Vietnamese",
+        "A1",
+        "B2",
+        audio=AudioSettings(enabled=True),
+    )
+
+    with (
+        patch("ankii.cli.prepare_import", return_value=(review, [note], [True])),
+        patch("ankii.cli.create_speech_client", return_value=object()),
+        patch("ankii.cli.attach_audio") as generate,
+        patch("builtins.input", return_value="cancel"),
+    ):
+        assert run_import(args, profile) == 0
+
+    generate.assert_not_called()
 
 
 def test_import_arguments_are_optional() -> None:

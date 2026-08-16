@@ -5,6 +5,7 @@ import pytest
 from ankii.settings import (
     AVAILABLE_LANGUAGES,
     CEFR_LEVELS,
+    AudioSettings,
     add_profile,
     canonical_language,
     create_default_settings,
@@ -33,6 +34,20 @@ def test_delete_profile_preserves_review_files(tmp_path: Path) -> None:
     assert "spanish" not in settings.profiles
     assert deleted_review_root == review_root
     assert review_file.exists()
+
+
+def test_delete_profile_removes_nested_audio_table(tmp_path: Path) -> None:
+    path, _created = create_default_settings(tmp_path / "anki.toml")
+    text = path.read_text(encoding="utf-8").replace(
+        "\n[profiles.french]",
+        "\n[profiles.vietnamese.audio]\nenabled = true\n\n[profiles.french]",
+    )
+    path.write_text(text, encoding="utf-8")
+
+    settings, _review_root = delete_profile(path, "vietnamese", new_default="french")
+
+    assert "vietnamese" not in settings.profiles
+    assert "profiles.vietnamese.audio" not in path.read_text(encoding="utf-8")
 
 
 def test_delete_default_profile_requires_and_applies_replacement(tmp_path: Path) -> None:
@@ -85,6 +100,77 @@ analysis_max_level = "C1"
     assert profile.analysis_levels == ("A1", "A2", "B1", "B2", "C1")
     assert profile.review_root == tmp_path / "reviews/french"
     assert profile.language_tag == "language::french"
+    assert profile.audio is None
+
+
+def test_loads_profile_audio_settings(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path / "anki.toml",
+        """settings_version = 1
+default_profile = "vietnamese"
+[anki]
+vocabulary_model = "Vocabulary"
+grammar_model = "Grammar"
+[profiles.vietnamese]
+study_language = "Vietnamese"
+deck = "Vietnamese"
+analysis_min_level = "A1"
+analysis_max_level = "B2"
+[profiles.vietnamese.audio]
+enabled = true
+provider = "openai"
+model = "gpt-4o-mini-tts"
+voice = "marin"
+accent = "Southern Vietnamese (Saigon)"
+instructions = "Speak clearly."
+""",
+    )
+
+    profile = load_settings(path).select_profile()
+
+    assert profile.audio == AudioSettings(
+        enabled=True,
+        provider="openai",
+        model="gpt-4o-mini-tts",
+        voice="marin",
+        accent="Southern Vietnamese (Saigon)",
+        instructions="Speak clearly.",
+    )
+    assert profile.audio_cache_path == tmp_path / "reviews/vietnamese/audio"
+    assert profile.audio_skip_path == tmp_path / "reviews/vietnamese/audio-skip.json"
+
+
+@pytest.mark.parametrize(
+    ("audio_line", "message"),
+    [
+        ('enabled = "yes"', "enabled must be true or false"),
+        ('provider = "local"', "provider must be 'openai'"),
+        ('voice = ""', "voice must be a non-empty string"),
+        ("accent = 42", "accent must be a string"),
+    ],
+)
+def test_rejects_invalid_audio_settings(
+    tmp_path: Path, audio_line: str, message: str
+) -> None:
+    path = _write(
+        tmp_path / "anki.toml",
+        f"""settings_version = 1
+default_profile = "vietnamese"
+[anki]
+vocabulary_model = "Vocabulary"
+grammar_model = "Grammar"
+[profiles.vietnamese]
+study_language = "Vietnamese"
+deck = "Vietnamese"
+analysis_min_level = "A1"
+analysis_max_level = "B2"
+[profiles.vietnamese.audio]
+{audio_line}
+""",
+    )
+
+    with pytest.raises(ValueError, match=message):
+        load_settings(path)
 
 
 def test_profile_precedence_is_argument_then_environment(monkeypatch, tmp_path: Path) -> None:

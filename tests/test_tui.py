@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from ankii import cli
 from ankii.settings import create_default_settings, set_default_profile
 from ankii.tui import ACTIONS, AnkiiApp, command_argv
 
@@ -27,6 +28,83 @@ def test_profile_management_actions_are_available() -> None:
     assert commands["profile-default"] == ("profile", "default")
     assert commands["profile-list"] == ("profile", "list")
     assert commands["profile-delete"] == ("profile", "delete")
+
+
+def test_dashboard_contains_every_cli_leaf_command() -> None:
+    commands = {action.command for action in ACTIONS}
+
+    assert commands == {
+        ("version",),
+        ("upgrade",),
+        ("setup",),
+        ("profile", "languages"),
+        ("profile", "list"),
+        ("profile", "create"),
+        ("profile", "default"),
+        ("profile", "delete"),
+        ("add",),
+        ("analyze",),
+        ("yhw", "fetch"),
+        ("yhw", "review"),
+        ("yhw", "wizard"),
+        ("tag",),
+        ("approve",),
+        ("key", "set"),
+        ("key", "status"),
+        ("key", "delete"),
+        ("anki", "status"),
+        ("anki", "decks"),
+        ("anki", "models"),
+        ("anki", "fields"),
+        ("anki", "setup-note-type"),
+        ("anki", "setup-note-types"),
+        ("anki", "migrate-tone-families"),
+        ("import",),
+        ("backfill-examples",),
+        ("backfill-audio",),
+        ("retag", "--all"),
+        ("reimport", "--all"),
+    }
+
+
+def test_dashboard_shortcuts_are_unique() -> None:
+    keys = [action.key for action in ACTIONS]
+
+    assert len(keys) == len(set(keys))
+    assert not {"p", "q"}.intersection(keys)
+
+
+def test_every_dashboard_command_can_start_without_extra_arguments() -> None:
+    parser = cli.build_parser()
+
+    for action in ACTIONS:
+        parser.parse_args(action.command)
+
+
+def test_version_management_actions_are_available_without_settings() -> None:
+    actions = {action.name: action for action in ACTIONS}
+
+    assert actions["version"].command == ("version",)
+    assert actions["upgrade"].command == ("upgrade",)
+    assert not actions["version"].needs_settings
+    assert not actions["upgrade"].needs_settings
+
+
+def test_dashboard_actions_are_grouped_by_section() -> None:
+    sections = [
+        action.section
+        for index, action in enumerate(ACTIONS)
+        if index == 0 or action.section != ACTIONS[index - 1].section
+    ]
+
+    assert sections == ["Study", "Anki", "Profiles", "Application"]
+
+
+def test_removed_discovery_commands_are_not_in_dashboard() -> None:
+    commands = {part for action in ACTIONS for part in action.command}
+
+    assert "tones" not in commands
+    assert "grammar-check" not in commands
 
 
 def test_dashboard_follows_changed_default_profile(tmp_path: Path) -> None:

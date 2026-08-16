@@ -58,6 +58,15 @@ Run `ankii` without a subcommand to open the full-screen terminal interface:
 ankii
 ```
 
+Check the installed version against GitHub, or upgrade the pipx installation explicitly:
+
+```bash
+ankii version
+ankii upgrade
+```
+
+Launching the terminal interface does not perform a network check.
+
 Choose actions with the arrow keys and Enter, or use the displayed shortcut keys. Each workflow
 opens in an embedded interactive console, including its prompts and safety confirmations. Press
 Escape after it finishes to return to the dashboard, `p` to switch profiles, and `q` to quit. All
@@ -119,6 +128,38 @@ deck = "French"
 analysis_min_level = "A1"
 analysis_max_level = "B2"
 ```
+
+Audio is opt-in per profile. This example generates a separate MP3 for the target word and
+each target-language example line during import:
+
+```toml
+[profiles.vietnamese.audio]
+enabled = true
+provider = "openai"
+model = "gpt-4o-mini-tts"
+voice = "marin"
+accent = "Southern Vietnamese (Saigon)"
+instructions = "Speak clearly at a natural, learner-friendly pace."
+```
+
+Run `ankii anki setup-note-types` after enabling audio so Vocabulary has `Target Audio` and
+`Example Audio` fields. Audio generation begins only after the `IMPORT` confirmation and only
+for non-duplicate Vocabulary notes. MP3 files are cached under the active profile's `audio/`
+directory; changing the text, model, voice, accent, or instructions creates a new cache entry.
+OpenAI API charges apply. The voices are AI-generated and built-in voices are optimized for
+English, so verify regional pronunciation such as Southern Vietnamese by listening.
+
+To add audio to Vocabulary notes that already exist in Anki, run:
+
+```bash
+ankii backfill-audio
+```
+
+The command finds missing target-word and example clips in the active profile's deck and asks
+for each one: `y` generates or reuses the cached clip, while `n` permanently suppresses that
+clip. Declines are saved in the profile's `audio-skip.json`, so later runs do not ask again.
+The skip identity includes the text and current model, voice, accent, and instructions; changing
+the speech configuration makes the new rendition eligible for review.
 
 Select a profile for one command or a shell session:
 
@@ -205,12 +246,17 @@ ankii import
 and wizard commands store review JSON under the active profile. Explicit `--output`,
 `--inbox`, `--reviews`, and review-file arguments remain available.
 
-Learn Southern Vietnamese tone families:
+For recap cards created by older versions, update the managed note types and run the
+explicit migration:
 
 ```bash
-ankii tones ma
-ankii import
+ankii anki setup-note-types Vietnamese
+ankii anki migrate-tone-families
 ```
+
+Migration requires the exact confirmation `MIGRATE`, updates every matched Vocabulary note,
+deletes the migrated recap notes, and removes the old `Tone Family` field. Then delete the
+now-empty `ToneFamily` note type manually from **Tools → Manage Note Types** in Anki.
 
 Inspect Anki and set up the shared note types:
 
@@ -222,15 +268,14 @@ ankii anki fields Vocabulary
 ankii anki setup-note-types Vietnamese
 ```
 
-The shared note types use language-neutral fields: `Target`, `Native`, `Example Target`, and
-`Example Native`. `Source` remains reserved for citation titles and URLs. Setup migrates values
-from legacy `Vietnamese`, `English`, `Example VN`, and `Example EN` fields before removing those
-language-specific fields.
+The shared note types use language-neutral fields: `Target`, `Native`, `Example Target`,
+`Example Native`, `Target Audio`, `Example Audio`, and the optional `Related Words`. `Source`
+remains reserved for citation titles and URLs. Setup migrates values from legacy `Vietnamese`,
+`English`, `Example VN`, and `Example EN` fields before removing those language-specific fields.
 
 Maintenance commands preview their changes and require explicit confirmation:
 
 ```bash
-ankii grammar-check --all --model Vocabulary --grammar-model Grammar
 ankii retag --all --model Vocabulary
 ankii reimport --all --model Vocabulary
 ```
@@ -241,9 +286,10 @@ confirmation `IMPORT`. Retagging and reimporting require `RETAG` and `REIMPORT`.
 ## Privacy and content
 
 Review files can contain study history, source titles and URLs, generated explanations,
-and Anki note identifiers. Keep them in the per-user data directory and do not commit
-them. The repository ignores `reviews/`, `anki.toml`, `.env`, downloads, exports, and
-temporary files.
+cached AI-generated speech, and Anki note identifiers. Text sent for speech generation is
+processed by the configured provider. Keep these files in the per-user data directory and do
+not commit them. The repository ignores `reviews/`, `anki.toml`, `.env`, downloads, exports,
+and temporary files.
 
 Only synthetic demonstration data belongs in `examples/`. Do not contribute copied
 lessons, course material, song lyrics, personal review archives, credentials, or Anki
@@ -267,11 +313,14 @@ that branch, then test, commit, tag, and push the release:
 ```bash
 pytest
 ruff check .
-git add .
 git commit -m "Release 0.1.1"
-git tag v0.1.1
-git push origin main --tags
+git tag -a v0.1.1 -m "Release 0.1.1"
+git push origin main
+git push origin v0.1.1
 ```
+
+Before the commit, review the complete diff and stage only the files intended for the release.
+The repository-local `ankii-release` skill contains the complete release checklist.
 
 The installed command is `ankii`, matching the project and avoiding conflicts with Anki's
 own executable on systems where it is available on `PATH`.

@@ -33,6 +33,7 @@ LEGACY_TONE_MODEL_MARKERS = (
     "/* /yhw2anki tone-family */",
 )
 VOCABULARY_LINK_FIELD = "Tone Family"
+RELATED_WORDS_FIELD = "Related Words"
 VOCABULARY_LINK_START = "<!-- ankii tone-family link -->"
 VOCABULARY_LINK_END = "<!-- /ankii tone-family link -->"
 VOCABULARY_LINK_CSS_START = "/* ankii tone-family link */"
@@ -45,6 +46,10 @@ LEGACY_VOCABULARY_LINK_CSS_MARKERS = (
     "/* yhw2anki tone-family link */",
     "/* /yhw2anki tone-family link */",
 )
+RELATED_WORDS_START = "<!-- ankii related-words -->"
+RELATED_WORDS_END = "<!-- /ankii related-words -->"
+RELATED_WORDS_CSS_START = "/* ankii related-words */"
+RELATED_WORDS_CSS_END = "/* /ankii related-words */"
 _TONE_COMBINING = {"\u0300", "\u0301", "\u0303", "\u0309", "\u0323"}
 _VIETNAMESE_VOWELS = set("aăâeêioôơuưy")
 _VIETNAMESE_LETTERS = "a-zăâđêôơư"
@@ -93,6 +98,8 @@ def tone_family_to_review(
     tone_model: str = "ToneFamily",
     vocabulary_model: str = "Vocabulary",
 ) -> dict[str, Any]:
+    del tone_model  # Accepted for compatibility with older callers.
+
     def entry_data(entry: ToneEntry) -> dict[str, Any]:
         return {
             "tone": entry.tone,
@@ -137,7 +144,6 @@ def tone_family_to_review(
             "entries": [entry_data(entry) for entry in family.entries],
             "explanation": family.explanation,
             "ai_model": family.model,
-            "tone_model": tone_model,
             "vocabulary_model": vocabulary_model,
         },
         "cards": cards,
@@ -512,6 +518,89 @@ def build_tone_family_note(family: ToneFamily, deck: str, model: str) -> dict[st
     }
 
 
+def tone_family_from_anki_note(note: dict[str, Any]) -> ToneFamily:
+    """Reconstruct a legacy tone family from a ToneFamily Anki note."""
+
+    raw_fields = note.get("fields", {})
+
+    def field(name: str) -> str:
+        raw = raw_fields.get(name, {})
+        value = raw.get("value", "") if isinstance(raw, dict) else ""
+        return html.unescape(re.sub(r"<br\s*/?>", "\n", str(value), flags=re.I)).strip()
+
+    base = normalize_syllable(field("Base"))
+    entries: list[ToneEntry] = []
+    for tone in TONE_NAMES:
+        prefix = TONE_FIELDS[tone]
+        meanings = [item.strip() for item in field(f"{prefix} Meaning").split(";") if item.strip()]
+        examples_vn = field(f"{prefix} Example VN").splitlines()
+        examples_en = field(f"{prefix} Example EN").splitlines()
+        senses = [
+            ToneSense(
+                meaning=meaning,
+                part_of_speech="",
+                example_vn=examples_vn[index] if index < len(examples_vn) else "",
+                example_en=examples_en[index] if index < len(examples_en) else "",
+            )
+            for index, meaning in enumerate(meanings)
+        ]
+        entries.append(
+            ToneEntry(
+                tone=tone,
+                form=field(f"{prefix} Form") or tone_variants(base)[tone],
+                senses=senses,
+                usage_note=field(f"{prefix} Usage"),
+                common=bool(field(f"{prefix} Enabled")),
+                tags=[],
+            )
+        )
+    return ToneFamily(base, entries, field("AI Explanation"), field("AI Model"))
+
+
+def related_words_html(family: ToneFamily, current_form: str) -> str:
+    """Render a complete, escaped tone-family table for one vocabulary note."""
+
+    rows = []
+    for entry in family.entries:
+        classes = [f"related-tone-{entry.tone}"]
+        if not entry.common:
+            classes.append("related-word-muted")
+        if unicodedata.normalize("NFC", entry.form) == unicodedata.normalize("NFC", current_form):
+            classes.append("related-word-current")
+        details = []
+        if entry.meaning:
+            details.append(f'<div class="related-word-meaning">{html.escape(entry.meaning)}</div>')
+        if entry.usage_note:
+            details.append(f'<div class="related-word-usage">{html.escape(entry.usage_note)}</div>')
+        if not entry.common and not entry.usage_note:
+            details.append('<div class="related-word-usage">Not a common standalone word</div>')
+        for sense in entry.senses:
+            if sense.example_vn:
+                example = html.escape(sense.example_vn)
+                translation = (
+                    f'<div class="related-word-translation">{html.escape(sense.example_en)}</div>'
+                    if sense.example_en
+                    else ""
+                )
+                details.append(f'<div class="related-word-example">{example}{translation}</div>')
+        rows.append(
+            f'<tr class="{" ".join(classes)}"><th>{html.escape(TONE_LABELS[entry.tone])}</th>'
+            f'<td class="related-word-form">{html.escape(entry.form)}</td>'
+            f"<td>{''.join(details)}</td></tr>"
+        )
+    dialect = (
+        "Southern Vietnamese often pronounces hỏi and ngã alike; their standard spellings "
+        "and meanings remain distinct."
+    )
+    return (
+        '<table class="related-words-table"><tbody>'
+        + "".join(rows)
+        + '</tbody></table><div class="related-words-dialect">'
+        + dialect
+        + "</div>"
+    )
+
+
 VOCABULARY_LINK_TEMPLATE = f"""{VOCABULARY_LINK_START}
 {{{{#Tone Family}}}}<div class="yhw-tone-family-link">
 <span class="yhw-tone-family-label">Related</span>{{{{Tone Family}}}}
@@ -534,8 +623,67 @@ VOCABULARY_LINK_CSS = f"""{VOCABULARY_LINK_CSS_START}
 .nightMode .yhw-tone-family-link a {{ color: #bbb; border-color: rgba(255,255,255,.18); }}
 {VOCABULARY_LINK_CSS_END}"""
 
+RELATED_WORDS_TEMPLATE = f"""{RELATED_WORDS_START}
+{{{{#Related Words}}}}
+<details class="related-words">
+  <summary>Related words</summary>
+  <div class="related-words-content">{{{{Related Words}}}}</div>
+</details>
+{{{{/Related Words}}}}
+{RELATED_WORDS_END}"""
 
-def setup_vocabulary_tone_link(model: str = "Vocabulary") -> None:
+RELATED_WORDS_CSS = f"""{RELATED_WORDS_CSS_START}
+.related-words {{
+  max-width: 680px; margin: 18px auto 0; border: 1px solid rgba(127,127,127,.28);
+  border-radius: 10px; background: rgba(127,127,127,.06); text-align: left;
+}}
+.related-words summary {{
+  padding: 11px 14px; cursor: pointer; color: #666; font-size: .82em;
+  font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+}}
+.related-words-content {{ padding: 0 12px 12px; }}
+.related-words-table {{ width: 100%; border-collapse: collapse; }}
+.related-words-table th, .related-words-table td {{
+  padding: 9px 7px; border-top: 1px solid rgba(127,127,127,.22); vertical-align: top;
+}}
+.related-words-table th {{ width: 17%; text-transform: capitalize; }}
+.related-word-form {{ width: 19%; font-size: 1.18em; font-weight: 750; }}
+.related-word-current {{ background: rgba(214,155,53,.15); }}
+.related-word-current .related-word-form::after {{ content: " •"; color: #b17813; }}
+.related-word-muted {{ opacity: .42; }}
+.related-word-example {{ margin-top: 6px; }}
+.related-word-translation, .related-word-usage, .related-words-dialect {{
+  margin-top: 4px; color: #777; font-size: .88em; font-style: italic;
+}}
+.related-words-dialect {{ padding: 10px 7px 0; }}
+.related-tone-level {{ color: #28666e; }}
+.related-tone-acute {{ color: #b23a2b; }}
+.related-tone-grave {{ color: #7251a1; }}
+.related-tone-hook {{ color: #a36316; }}
+.related-tone-tilde {{ color: #167653; }}
+.related-tone-dot {{ color: #45505e; }}
+.nightMode .related-words {{ background: rgba(255,255,255,.05); }}
+.nightMode .related-words summary, .nightMode .related-word-translation,
+.nightMode .related-word-usage, .nightMode .related-words-dialect {{ color: #bbb; }}
+@media(max-width: 480px) {{
+  .related-words-content {{ padding: 0 6px 8px; }}
+  .related-words-table th, .related-words-table td {{ padding: 7px 4px; }}
+}}
+{RELATED_WORDS_CSS_END}"""
+
+
+def _remove_managed_block(value: str, blocks: tuple[tuple[str, str], ...]) -> str:
+    for start, end in blocks:
+        while start in value and end in value:
+            before, rest = value.split(start, 1)
+            _old, after = rest.split(end, 1)
+            value = f"{before.rstrip()}\n{after.lstrip()}"
+    return value
+
+
+def setup_vocabulary_related_words(model: str = "Vocabulary") -> None:
+    """Add the optional Related Words field and managed disclosure to a model."""
+
     models = list(invoke("modelNames"))
     if model not in models:
         raise ValueError(
@@ -543,40 +691,38 @@ def setup_vocabulary_tone_link(model: str = "Vocabulary") -> None:
             "Run 'ankii anki setup-note-types' first."
         )
     fields = list(invoke("modelFieldNames", modelName=model))
-    if VOCABULARY_LINK_FIELD not in fields:
-        invoke("modelFieldAdd", modelName=model, fieldName=VOCABULARY_LINK_FIELD)
+    if RELATED_WORDS_FIELD not in fields:
+        invoke("modelFieldAdd", modelName=model, fieldName=RELATED_WORDS_FIELD)
     templates = invoke("modelTemplates", modelName=model)
     updated = {name: dict(value) for name, value in templates.items()}
+    template_blocks = (
+        (RELATED_WORDS_START, RELATED_WORDS_END),
+        (VOCABULARY_LINK_START, VOCABULARY_LINK_END),
+        LEGACY_VOCABULARY_LINK_MARKERS,
+    )
     for value in updated.values():
-        back = value["Back"]
-        for start, end in (
-            (VOCABULARY_LINK_START, VOCABULARY_LINK_END),
-            LEGACY_VOCABULARY_LINK_MARKERS,
-        ):
-            if start in back and end in back:
-                before, rest = back.split(start, 1)
-                _old, after = rest.split(end, 1)
-                back = f"{before.rstrip()}\n{after.lstrip()}"
-        value["Back"] = f"{back.rstrip()}\n\n{VOCABULARY_LINK_TEMPLATE}\n"
+        back = _remove_managed_block(value["Back"], template_blocks)
+        value["Back"] = f"{back.rstrip()}\n\n{RELATED_WORDS_TEMPLATE}\n"
     if updated != templates:
         invoke("updateModelTemplates", model={"name": model, "templates": updated})
     styling = invoke("modelStyling", modelName=model)
     css = str(styling.get("css", ""))
-    updated_css = css
-    for start, end in (
-        (VOCABULARY_LINK_CSS_START, VOCABULARY_LINK_CSS_END),
-        LEGACY_VOCABULARY_LINK_CSS_MARKERS,
-    ):
-        if start in updated_css and end in updated_css:
-            before, rest = updated_css.split(start, 1)
-            _old, after = rest.split(end, 1)
-            updated_css = f"{before.rstrip()}\n{after.lstrip()}"
-    updated_css = f"{updated_css.rstrip()}\n\n{VOCABULARY_LINK_CSS}\n"
+    updated_css = _remove_managed_block(
+        css,
+        (
+            (RELATED_WORDS_CSS_START, RELATED_WORDS_CSS_END),
+            (VOCABULARY_LINK_CSS_START, VOCABULARY_LINK_CSS_END),
+            LEGACY_VOCABULARY_LINK_CSS_MARKERS,
+        ),
+    )
+    updated_css = f"{updated_css.rstrip()}\n\n{RELATED_WORDS_CSS}\n"
     if updated_css != css:
-        invoke(
-            "updateModelStyling",
-            model={"name": model, "css": updated_css},
-        )
+        invoke("updateModelStyling", model={"name": model, "css": updated_css})
+
+
+def setup_vocabulary_tone_link(model: str = "Vocabulary") -> None:
+    """Deprecated compatibility wrapper for the embedded related-words setup."""
+    setup_vocabulary_related_words(model)
 
 
 def tone_family_link(base: str, parent_note_id: int) -> str:
@@ -592,7 +738,7 @@ def build_tone_vocabulary_note(
     deck: str,
     model: str,
     available_fields: set[str],
-    parent_note_id: int,
+    parent_note_id: int | None = None,
 ) -> dict[str, Any]:
     if not entry.common:
         raise ValueError(f"Cannot build a Vocabulary note for uncommon form {entry.form!r}.")
@@ -619,6 +765,6 @@ def build_tone_vocabulary_note(
         available_fields,
         field_names,
     )
-    if VOCABULARY_LINK_FIELD in available_fields:
-        note["fields"][VOCABULARY_LINK_FIELD] = tone_family_link(family.base, parent_note_id)
+    if RELATED_WORDS_FIELD in available_fields:
+        note["fields"][RELATED_WORDS_FIELD] = related_words_html(family, entry.form)
     return note
