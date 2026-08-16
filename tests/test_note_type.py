@@ -15,7 +15,9 @@ from ankii.note_type import (
     _migrate_generic_fields,
     _place_example_audio,
     _place_target_audio,
+    _replace_template_field,
     bootstrap_learning_models,
+    enforce_learning_models,
     setup_learning_models,
     setup_note_type,
 )
@@ -35,9 +37,9 @@ def test_bootstrap_learning_models_creates_complete_generic_models(invoke) -> No
     )
     assert vocabulary_call.kwargs["inOrderFields"] == list(VOCABULARY_FIELDS)
     template = vocabulary_call.kwargs["cardTemplates"][0]
-    assert "{{Target}}" in template["Front"]
-    assert "{{Target Audio}}" in template["Front"]
-    assert "{{Native}}" in template["Back"]
+    assert "{{Native}}" in template["Front"]
+    assert "{{Target}}" in template["Back"]
+    assert "{{Target Audio}}" in template["Back"]
     assert "{{Example Target}}" in template["Back"]
     assert "{{Example Native}}" in template["Back"]
     assert "{{Source}}" in template["Back"]
@@ -60,6 +62,28 @@ def test_bootstrap_learning_models_leaves_existing_models_untouched(invoke) -> N
     invoke.assert_called_once_with("modelNames")
 
 
+@patch("ankii.note_type.setup_note_type")
+@patch("ankii.note_type.invoke")
+def test_enforce_learning_models_restores_existing_models(invoke, setup_note_type) -> None:
+    invoke.side_effect = [
+        ["Vocabulary", "Grammar"],
+        list(GRAMMAR_FIELDS),
+        {"Grammar": {"Front": "old", "Back": "old"}},
+        None,
+        {"css": ".old {}"},
+        None,
+    ]
+
+    result = enforce_learning_models()
+
+    assert result == {"vocabulary_created": 0, "grammar_created": 0}
+    setup_note_type.assert_called_once_with("Vocabulary", apply_default_style=True)
+    assert any(item.args == ("updateModelTemplates",) for item in invoke.mock_calls)
+    assert call(
+        "updateModelStyling", model={"name": "Grammar", "css": GRAMMAR_CSS}
+    ) in invoke.mock_calls
+
+
 @patch("ankii.note_type.invoke")
 def test_setup_note_type_can_apply_default_vocabulary_design(invoke) -> None:
     invoke.side_effect = [
@@ -77,8 +101,9 @@ def test_setup_note_type_can_apply_default_vocabulary_design(invoke) -> None:
         item for item in invoke.mock_calls if item.args == ("updateModelTemplates",)
     )
     template = template_update.kwargs["model"]["templates"]["Vocabulary"]
-    assert "{{Target}}" in template["Front"]
-    assert "{{Native}}" in template["Back"]
+    assert "{{Native}}" in template["Front"]
+    assert "{{Target}}" in template["Back"]
+    assert "{{Target Audio}}" in template["Back"]
     assert "{{Example Target}}" in template["Back"]
     assert call(
         "updateModelStyling", model={"name": "Vocabulary", "css": VOCABULARY_CSS}
@@ -95,6 +120,14 @@ def test_default_vocabulary_design_requires_generic_fields(invoke) -> None:
         setup_note_type("French", apply_default_style=True)
 
     assert not any(item.args == ("modelFieldAdd",) for item in invoke.mock_calls)
+
+
+def test_replaces_conditional_legacy_image_field_references() -> None:
+    template = "{{#Visual Media}}<div>{{Visual Media}}</div>{{/Visual Media}}"
+
+    assert _replace_template_field(template, "Visual Media", "Image") == (
+        "{{#Image}}<div>{{Image}}</div>{{/Image}}"
+    )
 
 
 @patch("ankii.note_type.invoke")

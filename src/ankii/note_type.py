@@ -53,6 +53,17 @@ LEGACY_SOURCE_CSS_MARKERS = (
     "/* /yhw2anki source */",
 )
 
+TEMPLATE_FIELD_ALIASES = {
+    "Vietnamese": "Target",
+    "English": "Native",
+    "Example VN": "Example Target",
+    "Example EN": "Example Native",
+    "Everyday Example VN": "Example Target",
+    "Everyday Example EN": "Example Native",
+    "Visual Media": "Image",
+    "Picture": "Image",
+}
+
 EXAMPLE_TEMPLATE = """<!-- ankii examples -->
 {{#Example Target}}
 <div class="yhw-example">
@@ -358,12 +369,12 @@ VOCABULARY_FIELDS = (
 )
 
 VOCABULARY_FRONT = """{{#Image}}<div class="yhw-image">{{Image}}</div>{{/Image}}
-<div class="yhw-target">{{Target}}</div>
+<div class="yhw-native">{{Native}}</div>
 """
 
 VOCABULARY_BACK = """{{FrontSide}}
 <div class="yhw-answer">
-  <div class="yhw-native">{{Native}}</div>
+  <div class="yhw-target">{{Target}}</div>
 </div>
 """
 
@@ -384,8 +395,7 @@ VOCABULARY_CSS = """.card {
   border-radius: 10px;
 }
 .yhw-target {
-  font-size: 38px;
-  font-weight: 750;
+  font-size: 25px;
   line-height: 1.3;
 }
 .yhw-answer {
@@ -394,12 +404,13 @@ VOCABULARY_CSS = """.card {
   border-top: 1px solid #d9d2c3;
 }
 .yhw-native {
-  font-size: 25px;
+  font-size: 38px;
+  font-weight: 750;
   line-height: 1.45;
 }
 @media (max-width: 480px) {
   .card { padding: 22px 14px; }
-  .yhw-target { font-size: 32px; }
+  .yhw-native { font-size: 32px; }
 }
 """ + EXAMPLE_CSS + RELATED_WORDS_CSS
 
@@ -418,6 +429,7 @@ def bootstrap_learning_models(
         back = _append_once(VOCABULARY_BACK, EXAMPLE_MARKERS[0], EXAMPLE_TEMPLATE)
         back = _append_once(back, SOURCE_MARKERS[0], SOURCE_TEMPLATE)
         back = _append_once(back, RELATED_WORDS_START, RELATED_WORDS_TEMPLATE)
+        back = _place_target_audio(back)
         invoke(
             "createModel",
             modelName=vocabulary_model,
@@ -443,6 +455,40 @@ def bootstrap_learning_models(
         "vocabulary_created": vocabulary_created,
         "grammar_created": grammar_created,
     }
+
+
+def enforce_learning_models(
+    vocabulary_model: str = "Vocabulary",
+    grammar_model: str = "Grammar",
+) -> dict[str, int]:
+    """Create or restore the canonical managed vocabulary and grammar models."""
+    result = bootstrap_learning_models(vocabulary_model, grammar_model)
+    if not result["vocabulary_created"]:
+        setup_note_type(vocabulary_model, apply_default_style=True)
+    if not result["grammar_created"]:
+        fields = list(invoke("modelFieldNames", modelName=grammar_model))
+        for field in GRAMMAR_FIELDS:
+            if field not in fields:
+                invoke("modelFieldAdd", modelName=grammar_model, fieldName=field)
+        templates = invoke("modelTemplates", modelName=grammar_model)
+        desired = {"Front": GRAMMAR_FRONT, "Back": GRAMMAR_BACK}
+        if "Grammar" not in templates:
+            invoke(
+                "modelTemplateAdd",
+                modelName=grammar_model,
+                template={"Name": "Grammar", **desired},
+            )
+        elif templates["Grammar"] != desired:
+            updated = dict(templates)
+            updated["Grammar"] = desired
+            invoke(
+                "updateModelTemplates",
+                model={"name": grammar_model, "templates": updated},
+            )
+        styling = invoke("modelStyling", modelName=grammar_model)
+        if str(styling.get("css", "")) != GRAMMAR_CSS:
+            invoke("updateModelStyling", model={"name": grammar_model, "css": GRAMMAR_CSS})
+    return result
 
 
 def _append_once(value: str, marker: str, addition: str) -> str:
@@ -480,6 +526,13 @@ def _place_example_audio(value: str) -> str:
         return value
     reference = f"{{{{{target_field}}}}}"
     return value.replace(reference, f"{reference}\n{INLINE_EXAMPLE_AUDIO_TEMPLATE}", 1)
+
+
+def _replace_template_field(value: str, old: str, new: str) -> str:
+    """Replace Anki field references without changing ordinary template text."""
+    for prefix in ("", "#", "^", "/"):
+        value = value.replace(f"{{{{{prefix}{old}}}}}", f"{{{{{prefix}{new}}}}}")
+    return value
 
 
 def _remove_marked_block(value: str, start: str, end: str) -> str:
@@ -543,16 +596,8 @@ def setup_learning_models(
         for start, end in obsolete_template_blocks:
             value = _remove_marked_block(value, start, end)
         value = _remove_marked_block(value, *TARGET_AUDIO_MARKERS)
-        replacements = {
-            "{{Vietnamese}}": "{{Target}}",
-            "{{English}}": "{{Native}}",
-            "{{Example VN}}": "{{Example Target}}",
-            "{{Example EN}}": "{{Example Native}}",
-            "{{Everyday Example VN}}": "{{Example Target}}",
-            "{{Everyday Example EN}}": "{{Example Native}}",
-        }
-        for old, new in replacements.items():
-            value = value.replace(old, new)
+        for old, new in TEMPLATE_FIELD_ALIASES.items():
+            value = _replace_template_field(value, old, new)
         return value
 
     def clean_css(value: str) -> str:
@@ -755,7 +800,13 @@ def _migrate_generic_fields(
         ("Everyday Example EN", "Example Native"),
     ]
     if not examples_only:
-        pairs = [("Vietnamese", "Target"), ("English", "Native"), *pairs]
+        pairs = [
+            ("Vietnamese", "Target"),
+            ("English", "Native"),
+            ("Visual Media", "Image"),
+            ("Picture", "Image"),
+            *pairs,
+        ]
     removable: list[str] = []
     for old, new in pairs:
         if old not in fields:
@@ -806,6 +857,7 @@ def setup_note_type(model: str, *, apply_default_style: bool = False) -> dict[st
         )
 
     original_fields = list(invoke("modelFieldNames", modelName=model))
+    templates: dict[str, dict[str, str]] | None = None
     if apply_default_style:
         required = {"Target", "Native"}
         missing_required = sorted(required.difference(original_fields))
@@ -816,6 +868,23 @@ def setup_note_type(model: str, *, apply_default_style: bool = False) -> dict[st
                 "to migrate language-specific fields first."
             )
         managed_fields = VOCABULARY_FIELDS
+        templates = invoke("modelTemplates", modelName=model)
+        repaired_templates: dict[str, dict[str, str]] = {}
+        for name, template in templates.items():
+            repaired = dict(template)
+            for side in ("Front", "Back"):
+                value = repaired[side]
+                for old, new in TEMPLATE_FIELD_ALIASES.items():
+                    if old not in original_fields and new in original_fields:
+                        value = _replace_template_field(value, old, new)
+                repaired[side] = value
+            repaired_templates[name] = repaired
+        if repaired_templates != templates:
+            invoke(
+                "updateModelTemplates",
+                model={"name": model, "templates": repaired_templates},
+            )
+            templates = repaired_templates
     else:
         managed_fields = (*LEGACY_EXAMPLE_FIELDS, *VOCABULARY_AUDIO_FIELDS, "Import ID")
     for field in managed_fields:
@@ -854,7 +923,8 @@ def setup_note_type(model: str, *, apply_default_style: bool = False) -> dict[st
                 invoke("updateNoteFields", note={"id": note["noteId"], "fields": updates})
                 migrated += 1
 
-    templates: dict[str, dict[str, str]] = invoke("modelTemplates", modelName=model)
+    if templates is None:
+        templates = invoke("modelTemplates", modelName=model)
     changed_templates: dict[str, dict[str, str]] = {}
     for name, template in templates.items():
         updated = dict(template)
@@ -862,9 +932,10 @@ def setup_note_type(model: str, *, apply_default_style: bool = False) -> dict[st
             updated["Front"] = _place_target_audio(VOCABULARY_FRONT)
             back = _append_once(VOCABULARY_BACK, EXAMPLE_MARKERS[0], EXAMPLE_TEMPLATE)
             back = _append_once(back, SOURCE_MARKERS[0], SOURCE_TEMPLATE)
-            updated["Back"] = _append_once(
+            back = _append_once(
                 back, RELATED_WORDS_START, RELATED_WORDS_TEMPLATE
             )
+            updated["Back"] = _place_target_audio(back)
         else:
             updated["Front"] = _place_target_audio(template["Front"])
             back = template["Back"]

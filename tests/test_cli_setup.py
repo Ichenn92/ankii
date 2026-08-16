@@ -17,11 +17,18 @@ def test_setup_note_type_parser_accepts_default_style_flag() -> None:
 def test_setup_creates_settings_and_profile_directories(monkeypatch, tmp_path: Path) -> None:
     settings_path = tmp_path / "local-data" / "anki.toml"
     monkeypatch.setattr(cli, "get_openai_api_key", lambda: (None, None))
+    provisioned = []
+    monkeypatch.setattr(
+        cli,
+        "_provision_anki",
+        lambda settings, decks: provisioned.append((settings.vocabulary_model, decks)),
+    )
 
     assert cli.run_setup(settings_path, skip_key=True) == 0
     assert settings_path.exists()
     assert (settings_path.parent / "reviews" / "vietnamese").is_dir()
     assert (settings_path.parent / "reviews" / "french").is_dir()
+    assert provisioned == [("Vocabulary", ["Vietnamese", "French"])]
 
 
 def test_setup_stores_key_in_macos_keychain(monkeypatch, tmp_path: Path) -> None:
@@ -30,6 +37,7 @@ def test_setup_stores_key_in_macos_keychain(monkeypatch, tmp_path: Path) -> None
     monkeypatch.setattr(cli, "keychain_supported", lambda: True)
     monkeypatch.setattr(cli, "store_keychain_key", lambda: stored.append(True))
     monkeypatch.setattr("builtins.input", lambda _prompt: "")
+    monkeypatch.setattr(cli, "_provision_anki", lambda _settings, _decks: None)
 
     assert cli.run_setup(tmp_path / "anki.toml") == 0
     assert stored == [True]
@@ -118,6 +126,35 @@ def test_disables_deck_audio_autoplay_but_keeps_other_options(invoke) -> None:
         "saveDeckConfig",
         config={"id": 42, "name": "Vietnamese", "autoplay": False, "replayq": True},
     ) in invoke.mock_calls
+
+
+def test_provision_anki_enforces_models_and_creates_missing_decks(monkeypatch, tmp_path) -> None:
+    settings_path, _created = cli.create_default_settings(tmp_path / "anki.toml")
+    settings = load_settings(settings_path)
+    enforced = []
+    disabled = []
+    calls = []
+    monkeypatch.setattr(
+        cli,
+        "enforce_learning_models",
+        lambda vocabulary, grammar: enforced.append((vocabulary, grammar))
+        or {"vocabulary_created": 1, "grammar_created": 1},
+    )
+
+    def fake_invoke(action, **kwargs):
+        calls.append((action, kwargs))
+        return ["French"] if action == "deckNames" else None
+
+    monkeypatch.setattr(cli, "invoke", fake_invoke)
+    monkeypatch.setattr(
+        cli, "_disable_deck_audio_autoplay", lambda deck: disabled.append(deck) or True
+    )
+
+    cli._provision_anki(settings, ["Vietnamese", "French"])
+
+    assert enforced == [("Vocabulary", "Grammar")]
+    assert ("createDeck", {"deck": "Vietnamese"}) in calls
+    assert disabled == ["Vietnamese", "French"]
 
 
 def test_setup_note_type_prompt_preserves_active_profile(monkeypatch) -> None:

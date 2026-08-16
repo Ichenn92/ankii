@@ -60,6 +60,7 @@ from ankii.maintenance import apply_reimport, apply_retags, prepare_reimport, re
 from ankii.note_type import (
     backfill_examples,
     bootstrap_learning_models,
+    enforce_learning_models,
     setup_learning_models,
     setup_note_type,
 )
@@ -80,6 +81,7 @@ from ankii.settings import (
     DEFAULT_PROFILE,
     AudioSettings,
     LanguageProfile,
+    Settings,
     add_profile,
     canonical_language,
     create_default_settings,
@@ -593,6 +595,7 @@ def run_setup(settings_path: Path, *, skip_key: bool = False) -> int:
     print(f"{action} settings: {settings_path}")
     print(f"Local data: {settings_path.parent}")
     print(f"Reviews: {settings_path.parent / 'reviews'}")
+    _provision_anki(settings, [profile.deck for profile in settings.profiles.values()])
 
     key, source = get_openai_api_key()
     if key:
@@ -611,6 +614,23 @@ def run_setup(settings_path: Path, *, skip_key: bool = False) -> int:
     else:
         print("OpenAI API key setup skipped. Run 'ankii key set' whenever you are ready.")
     return 0
+
+
+def _provision_anki(settings: Settings, decks: list[str]) -> None:
+    """Enforce managed note types and provision profile decks in Anki."""
+    result = enforce_learning_models(settings.vocabulary_model, settings.grammar_model)
+    existing_decks = set(invoke("deckNames"))
+    for deck in dict.fromkeys(decks):
+        if deck not in existing_decks:
+            invoke("createDeck", deck=deck)
+            existing_decks.add(deck)
+        _disable_deck_audio_autoplay(deck)
+    print(
+        "Anki note types: "
+        f"{settings.vocabulary_model}, {settings.grammar_model} "
+        f"({result['vocabulary_created'] + result['grammar_created']} created)"
+    )
+    print(f"Anki decks provisioned: {', '.join(dict.fromkeys(decks))}")
 
 
 def _audio_setup_value(label: str, provided: str | None, default: str) -> str:
@@ -811,6 +831,11 @@ def run_profile(args: argparse.Namespace, settings_path: Path) -> int:
     deck = _profile_value("Anki deck", args.deck, study_language)
     minimum = args.min_level or _choose("minimum CEFR level", list(CEFR_LEVELS), "A1")
     maximum = args.max_level or _choose("maximum CEFR level", list(CEFR_LEVELS), "B2")
+    if name in settings.profiles:
+        raise ValueError(f"Profile {name!r} already exists.")
+    if CEFR_LEVELS.index(minimum) > CEFR_LEVELS.index(maximum):
+        raise ValueError("Profile analysis level range must be ascending.")
+    _provision_anki(settings, [deck])
     profile = add_profile(
         settings_path,
         name,

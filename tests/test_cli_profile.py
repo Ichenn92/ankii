@@ -6,6 +6,11 @@ from ankii import cli
 from ankii.settings import create_default_settings, load_settings
 
 
+@pytest.fixture(autouse=True)
+def _stub_anki_provisioning(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_provision_anki", lambda _settings, _decks: None)
+
+
 def _run_main(monkeypatch, arguments: list[str]) -> int:
     monkeypatch.setattr("sys.argv", ["ankii", *arguments])
     with pytest.raises(SystemExit) as exit_info:
@@ -49,6 +54,39 @@ def test_profile_create_with_arguments_and_set_default(monkeypatch, tmp_path: Pa
         == 0
     )
     assert load_settings(settings_path).default_profile == "spanish"
+
+
+def test_profile_create_provisions_anki_deck_before_saving(monkeypatch, tmp_path: Path) -> None:
+    settings_path, _created = create_default_settings(tmp_path / "anki.toml")
+    provisioned = []
+    monkeypatch.setattr(
+        cli,
+        "_provision_anki",
+        lambda settings, decks: provisioned.append((settings.vocabulary_model, decks)),
+    )
+
+    assert _run_main(
+        monkeypatch,
+        [
+            "--settings",
+            str(settings_path),
+            "profile",
+            "create",
+            "spanish",
+            "--study-language",
+            "Spanish",
+            "--native-language",
+            "English",
+            "--deck",
+            "Spanish",
+            "--min-level",
+            "A1",
+            "--max-level",
+            "B2",
+        ],
+    ) == 0
+
+    assert provisioned == [("Vocabulary", ["Spanish"])]
 
 
 def test_profile_create_rejects_invalid_level_order(monkeypatch, tmp_path: Path) -> None:

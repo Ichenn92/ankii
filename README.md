@@ -29,6 +29,11 @@ pipx ensurepath
 pipx install "ankii[ai] @ git+https://github.com/Ichenn92/ankii.git@main"
 ```
 
+Keep Anki Desktop open with AnkiConnect installed when running `ankii setup`. Initial setup
+creates the configured profile decks and enforces the managed `Vocabulary` and `Grammar` note
+types, including their fields, card templates, and styling. Creating another language profile
+provisions its Anki deck through the same managed note types automatically.
+
 ## Update
 
 Install updates from the public repository with:
@@ -285,6 +290,7 @@ The shared note types use language-neutral fields: `Target`, `Native`, `Example 
 `Example Native`, `Target Audio`, `Example Audio`, and the optional `Related Words`. `Source`
 remains reserved for citation titles and URLs. Setup migrates values from legacy `Vietnamese`,
 `English`, `Example VN`, and `Example EN` fields before removing those language-specific fields.
+The default Vocabulary card prompts with `Native` on the front and reveals `Target` on the back.
 
 Maintenance commands preview their changes and require explicit confirmation:
 
