@@ -297,7 +297,7 @@ def missing_audio(
     if absent:
         raise ValueError(
             f"Vocabulary note type {model!r} is missing fields: "
-            f"{', '.join(sorted(absent))}. Run 'ankii anki setup-note-types' first."
+            f"{', '.join(sorted(absent))}. Run 'ankii anki update' first."
         )
     ignored = ignored or set()
     candidates: list[MissingAudio] = []

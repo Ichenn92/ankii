@@ -62,7 +62,7 @@ def test_build_note_maps_fields_and_picture() -> None:
     assert note["fields"]["Example EN"] == (
         "Show me the menu.<br>I am looking at the menu."
     )
-    assert note["picture"]["fields"] == ["Image"]
+    assert note["picture"]["fields"] == ["Visual Media"]
     assert note["options"]["allowDuplicate"] is False
 
 

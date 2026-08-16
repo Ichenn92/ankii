@@ -688,7 +688,7 @@ def setup_vocabulary_related_words(model: str = "Vocabulary") -> None:
     if model not in models:
         raise ValueError(
             f"Anki vocabulary note type {model!r} does not exist. "
-            "Run 'ankii anki setup-note-types' first."
+            "Run 'ankii anki update' first."
         )
     fields = list(invoke("modelFieldNames", modelName=model))
     if RELATED_WORDS_FIELD not in fields:

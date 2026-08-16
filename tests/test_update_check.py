@@ -15,12 +15,12 @@ def test_version_comparison() -> None:
 
 
 def test_check_version_reports_available_update(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(update_check, "_fetch_latest_version", lambda: "0.5.0")
+    monkeypatch.setattr(update_check, "_fetch_latest_version", lambda: "9.9.9")
 
     assert update_check.check_version() == 0
     output = capsys.readouterr().out
     assert f"Installed: {__version__}" in output
-    assert "Latest:    0.5.0" in output
+    assert "Latest:    9.9.9" in output
     assert "ankii upgrade" in output
 
 

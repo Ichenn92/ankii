@@ -169,8 +169,8 @@ locale (for example `language = "vi_VN"`) in the profile's audio table. Generati
 macOS `say` command and local `ffmpeg`; no study text is sent to OpenAI. Clips use the same
 deterministic MP3 cache and Anki fields as OpenAI-generated audio.
 
-Run `ankii anki setup-note-types` after enabling audio so Vocabulary has `Target Audio` and
-`Example Audio` fields. Audio generation begins only after the `IMPORT` confirmation and only
+Run `ankii anki update` after enabling audio so Vocabulary has `Target Audio` and `Example
+Audio` fields. Audio generation begins only after the `IMPORT` confirmation and only
 for non-duplicate Vocabulary notes. MP3 files are cached under the active profile's `audio/`
 directory; changing the text, model, voice, accent, or instructions creates a new cache entry.
 OpenAI API charges apply. The voices are AI-generated and built-in voices are optimized for
@@ -270,27 +270,26 @@ stores review JSON under the active profile and resumes an existing review when 
 Explicit `--inbox`, `--reviews`, and review-file arguments remain available to the
 general review commands.
 
-Inspect Anki and set up the shared note types:
+Check Anki, inspect the active profile, or enforce all managed Anki settings:
 
 ```bash
-ankii anki status
-ankii anki decks
-ankii anki models
-ankii anki fields Vocabulary
-ankii anki bootstrap-note-types
-ankii anki setup-note-types Vietnamese
+ankii anki check
+ankii anki list
+ankii anki update
 ```
 
-Use `bootstrap-note-types` for a new Anki collection. It creates the shared `Vocabulary`
-and `Grammar` note types without requiring a language-specific source note type and leaves
-either model untouched when it already exists. Use `setup-note-types SOURCE` when migrating
-an existing language-specific vocabulary note type instead.
+`list` reports the active profile's deck, note and card counts, note-type fields, card types,
+and whether the managed definitions need an update. `update` is the single setup and repair
+command: it creates the profile deck when missing and enforces the shared `Vocabulary` and
+`Grammar` note types, fields, card templates, and styling. It is safe to run again after an
+upgrade or when a user's Anki collection has drifted.
 
-The shared note types use language-neutral fields: `Target`, `Native`, `Example Target`,
-`Example Native`, `Target Audio`, `Example Audio`, and the optional `Related Words`. `Source`
-remains reserved for citation titles and URLs. Setup migrates values from legacy `Vietnamese`,
-`English`, `Example VN`, and `Example EN` fields before removing those language-specific fields.
-The default Vocabulary card prompts with `Native` on the front and reveals `Target` on the back.
+The managed `Vocabulary` note type uses the `AnkiiCard` card template and the fields `Target`,
+`Native`, `Source`, `Audio`, `Components`, `Notes`, `Visual Media`, `Example Target`,
+`Example Native`, `Import ID`, `Related Words`, `Target Audio`, and `Example Audio`. Setup
+migrates known aliases such as `Vietnamese`, `English`, `Image`, and `AIExplanation` into this
+schema. The card prompts with `Native`, `Example Native`, and optional `Visual Media` on the
+front, then reveals `Target`, `Example Target`, audio, source, and related words on the back.
 
 Maintenance commands preview their changes and require explicit confirmation:
 

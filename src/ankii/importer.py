@@ -16,8 +16,8 @@ GENERIC_FIELD_DEFAULTS = {
     "example_native": "Example Native",
     "source": "Source",
     "lesson": "Lesson",
-    "explanation": "AIExplanation",
-    "image": "Image",
+    "explanation": "Notes",
+    "image": "Visual Media",
     "target_audio": "Target Audio",
     "example_audio": "Example Audio",
     "import_id": "Import ID",
@@ -32,8 +32,8 @@ FIELD_DEFAULTS = {
     "example_en": "Example EN",
     "source": "Source",
     "lesson": "Lesson",
-    "explanation": "AIExplanation",
-    "image": "Image",
+    "explanation": "Notes",
+    "image": "Visual Media",
     "target_audio": "Target Audio",
     "example_audio": "Example Audio",
     "import_id": "Import ID",
@@ -46,8 +46,8 @@ FIELD_ALIASES = {
     "example_native": ("Example Native", "Example EN", "ExampleEN", "Example Translation"),
     "source": ("Source", "URL"),
     "lesson": ("Lesson", "Unit"),
-    "explanation": ("AIExplanation", "Notes", "Note"),
-    "image": ("Image", "Visual Media", "Picture"),
+    "explanation": ("Notes", "AIExplanation", "Note"),
+    "image": ("Visual Media", "Image", "Picture"),
     "target_audio": ("Target Audio", "Audio", "Word Audio"),
     "example_audio": ("Example Audio", "Sentence Audio"),
     "import_id": ("Import ID", "ImportID"),
@@ -240,7 +240,7 @@ def build_grammar_note(
     if missing:
         raise ValueError(
             f"Grammar note type {model!r} is missing fields: {', '.join(sorted(missing))}. "
-            "Run 'ankii anki setup-note-types' first."
+            "Run 'ankii anki update' first."
         )
     source_parts = [
         str(card.get("source_title", "")).strip(),
@@ -321,7 +321,7 @@ def prepare_import(
     if has_grammar and grammar_model not in models:
         raise ValueError(
             f"Anki grammar note type {grammar_model!r} does not exist. "
-            "Run 'ankii anki setup-note-types' first."
+            "Run 'ankii anki update' first."
         )
     notes = []
     for card in approved:

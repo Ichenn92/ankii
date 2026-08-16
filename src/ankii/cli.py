@@ -58,11 +58,17 @@ from ankii.keychain import (
 )
 from ankii.maintenance import apply_reimport, apply_retags, prepare_reimport, retag_notes
 from ankii.note_type import (
+    GRAMMAR_BACK,
+    GRAMMAR_CSS,
+    GRAMMAR_FIELDS,
+    GRAMMAR_FRONT,
+    VOCABULARY_BACK,
+    VOCABULARY_CARD_TEMPLATE,
+    VOCABULARY_CSS,
+    VOCABULARY_FIELDS,
+    VOCABULARY_FRONT,
     backfill_examples,
-    bootstrap_learning_models,
     enforce_learning_models,
-    setup_learning_models,
-    setup_note_type,
 )
 from ankii.review import (
     AI_TAG_PREFIXES,
@@ -275,35 +281,11 @@ Run 'ankii COMMAND --help' for help with a specific command.""",
     )
     anki_parser = commands.add_parser("anki", help="Inspect the local Anki collection.")
     anki_commands = anki_parser.add_subparsers(dest="anki_command", required=True)
-    anki_commands.add_parser("status", help="Check the AnkiConnect connection.")
-    anki_commands.add_parser("decks", help="List decks.")
-    anki_commands.add_parser("models", help="List note types.")
-    fields_parser = anki_commands.add_parser("fields", help="List fields for a note type.")
-    fields_parser.add_argument("model", nargs="?", help="Note type (prompted when omitted).")
-    setup_parser = anki_commands.add_parser(
-        "setup-note-type",
-        help="Add example fields, migrate legacy values, and update card backs.",
-    )
-    setup_parser.add_argument(
-        "model",
-        nargs="?",
-        help="Exact note type name (prompted when omitted).",
-    )
-    setup_parser.add_argument(
-        "--apply-default-style",
-        action="store_true",
-        help="Replace the note type's card templates and CSS with ankii's default design.",
-    )
-    setup_models_parser = anki_commands.add_parser(
-        "setup-note-types",
-        help="Migrate language-specific fields to generic Vocabulary and Grammar fields.",
-    )
-    setup_models_parser.add_argument(
-        "source", nargs="?", default=None, help="Existing language-specific vocabulary note type."
-    )
+    anki_commands.add_parser("check", help="Check the AnkiConnect connection.")
+    anki_commands.add_parser("list", help="List Anki data for the active profile.")
     anki_commands.add_parser(
-        "bootstrap-note-types",
-        help="Create missing managed Vocabulary and Grammar note types from scratch.",
+        "update",
+        help="Enforce managed note types and provision the active profile deck.",
     )
     import_parser = commands.add_parser(
         "import",
@@ -453,68 +435,31 @@ def run_approve(path: Path, profile: LanguageProfile = DEFAULT_PROFILE) -> int:
 
 def run_anki(
     command: str,
-    model: str | None = None,
     profile: LanguageProfile = DEFAULT_PROFILE,
     vocabulary_model: str = "Vocabulary",
     grammar_model: str = "Grammar",
-    apply_default_style: bool = False,
 ) -> int:
-    if command == "status":
+    if command == "check":
         version = invoke("version")
         print(f"Connected to AnkiConnect (API version {version}).")
-    elif command == "decks":
-        print("\n".join(invoke("deckNames")))
-    elif command == "models":
-        print("\n".join(invoke("modelNames")))
-    elif command == "fields":
-        if model is None:
-            models = sorted(invoke("modelNames"), key=str.casefold)
-            model = _choose("note type", models, vocabulary_model)
-        print("\n".join(invoke("modelFieldNames", modelName=model)))
-    elif command == "setup-note-type" and model is not None:
+    elif command == "list":
+        _print_anki_profile_data(profile, vocabulary_model, grammar_model)
+    elif command == "update":
         print(
-            "This will add bilingual example fields if needed, copy legacy example values without "
-            "overwriting data, and update every card back for this note type."
+            f"This will enforce {vocabulary_model!r}/{VOCABULARY_CARD_TEMPLATE!r} and "
+            f"{grammar_model!r}, then provision deck {profile.deck!r}."
         )
         if input("Type UPDATE to continue: ").strip() != "UPDATE":
             print("Update cancelled. No changes were made.")
             return 0
-        result = setup_note_type(model, apply_default_style=apply_default_style)
-        autoplay_disabled = _disable_deck_audio_autoplay(profile.deck)
-        print(f"Fields added:      {result['fields_added']}")
-        print(f"Notes migrated:    {result['notes_migrated']}")
-        print(f"Templates updated: {result['templates_updated']}")
-        print(f"Styling updated:   {result['styling_updated']}")
-        print(f"Audio autoplay:    {'disabled' if autoplay_disabled else 'already disabled'}")
-    elif command == "setup-note-type":
-        models = sorted(invoke("modelNames"), key=str.casefold)
-        preferred = next(
-            (name for name in models if "vietnamese" in name.casefold()),
-            None,
+        settings = Settings(
+            default_profile=profile.name,
+            vocabulary_model=vocabulary_model,
+            grammar_model=grammar_model,
+            profiles={profile.name: profile},
+            path=Path("anki.toml"),
         )
-        selected_model = _choose("note type", models, preferred)
-        return run_anki(
-            command,
-            selected_model,
-            profile,
-            vocabulary_model,
-            grammar_model,
-            apply_default_style,
-        )
-    elif command == "setup-note-types":
-        source_model = model or profile.study_language
-        print(
-            f"This will migrate {source_model!r} into generic {vocabulary_model!r} fields and "
-            f"create or refresh {grammar_model!r}."
-        )
-        if input("Type UPDATE to continue: ").strip() != "UPDATE":
-            print("Update cancelled. No changes were made.")
-            return 0
-        result = setup_learning_models(source_model, vocabulary_model, grammar_model)
-        decks = invoke("deckNames")
-        if profile.deck not in decks:
-            invoke("createDeck", deck=profile.deck)
-        autoplay_disabled = _disable_deck_audio_autoplay(profile.deck)
+        _provision_anki(settings, [profile.deck])
         escaped_model = vocabulary_model.replace('"', '\\"')
         escaped_deck = profile.deck.replace('"', '\\"')
         note_ids = invoke(
@@ -522,34 +467,53 @@ def run_anki(
         )
         if note_ids:
             invoke("addTags", notes=note_ids, tags=profile.language_tag)
-        print(f"Vocabulary model created: {result['vocabulary_created']}")
-        print(f"Vocabulary notes migrated: {result['notes_migrated']}")
-        print(f"Grammar model created: {result['grammar_created']}")
-        print(f"Profile deck: {profile.deck}")
-        print(f"Audio autoplay: {'disabled' if autoplay_disabled else 'already disabled'}")
-        print(
-            "Vocabulary fields: Target, Native, Example Target, Example Native, "
-            "Target Audio, Example Audio, Related Words"
-        )
-        print("The original source note type is left empty and can be removed in Anki.")
-    elif command == "bootstrap-note-types":
-        print(
-            f"This will create missing {vocabulary_model!r} and {grammar_model!r} note types "
-            "without migrating an existing note type."
-        )
-        if input("Type CREATE to continue: ").strip() != "CREATE":
-            print("Bootstrap cancelled. No changes were made.")
-            return 0
-        result = bootstrap_learning_models(vocabulary_model, grammar_model)
-        decks = invoke("deckNames")
-        if profile.deck not in decks:
-            invoke("createDeck", deck=profile.deck)
-        autoplay_disabled = _disable_deck_audio_autoplay(profile.deck)
-        print(f"Vocabulary model created: {result['vocabulary_created']}")
-        print(f"Grammar model created: {result['grammar_created']}")
-        print(f"Profile deck: {profile.deck}")
-        print(f"Audio autoplay: {'disabled' if autoplay_disabled else 'already disabled'}")
+        print("Anki settings updated.")
     return 0
+
+
+def _print_anki_profile_data(
+    profile: LanguageProfile,
+    vocabulary_model: str,
+    grammar_model: str,
+) -> None:
+    models = set(invoke("modelNames"))
+    decks = set(invoke("deckNames"))
+    escaped_deck = profile.deck.replace('"', '\\"')
+    notes = invoke("findNotes", query=f'deck:"{escaped_deck}"')
+    cards = invoke("findCards", query=f'deck:"{escaped_deck}"')
+
+    print(f"Profile: {profile.name}")
+    print(f"Languages: {profile.study_language} -> {profile.native_language}")
+    print(f"Deck: {profile.deck} ({'present' if profile.deck in decks else 'missing'})")
+    print(f"Notes: {len(notes)}")
+    print(f"Cards: {len(cards)}")
+
+    specifications = (
+        (
+            vocabulary_model,
+            list(VOCABULARY_FIELDS),
+            {VOCABULARY_CARD_TEMPLATE: {"Front": VOCABULARY_FRONT, "Back": VOCABULARY_BACK}},
+            VOCABULARY_CSS,
+        ),
+        (
+            grammar_model,
+            list(GRAMMAR_FIELDS),
+            {"Grammar": {"Front": GRAMMAR_FRONT, "Back": GRAMMAR_BACK}},
+            GRAMMAR_CSS,
+        ),
+    )
+    for model, expected_fields, expected_templates, expected_css in specifications:
+        if model not in models:
+            print(f"Note type: {model} (missing)")
+            continue
+        fields = list(invoke("modelFieldNames", modelName=model))
+        templates = invoke("modelTemplates", modelName=model)
+        css = str(invoke("modelStyling", modelName=model).get("css", ""))
+        managed = set(expected_fields) <= set(fields)
+        managed = managed and templates == expected_templates and css == expected_css
+        print(f"Note type: {model} ({'managed' if managed else 'needs update'})")
+        print(f"  Fields: {', '.join(fields)}")
+        print(f"  Card types: {', '.join(templates) or '(none)'}")
 
 
 def _disable_deck_audio_autoplay(deck: str) -> bool:
@@ -748,7 +712,7 @@ def run_audio_setup(
                 f"Local voice: {updated.audio.voice} ({updated.audio.language}). "
                 "Audio will be generated on this Mac."
             )
-        print("Run 'ankii anki setup-note-types' before importing audio.")
+        print("Run 'ankii anki update' before importing audio.")
     return 0
 
 
@@ -1519,7 +1483,7 @@ def run_tone_import(
     if vocabulary_model not in models:
         raise ValueError(
             f"Anki vocabulary note type {vocabulary_model!r} does not exist. "
-            "Run 'ankii anki setup-note-types' first."
+            "Run 'ankii anki update' first."
         )
     vocabulary_fields = set(invoke("modelFieldNames", modelName=vocabulary_model))
     vocabulary_mapping = infer_field_names(list(vocabulary_fields))
@@ -1930,7 +1894,7 @@ def run_import(
             raise ValueError(
                 f"Vocabulary note type {args.model!r} is missing audio fields: "
                 f"{', '.join(sorted(missing_audio_fields))}. "
-                "Run 'ankii anki setup-note-types' first."
+                "Run 'ankii anki update' first."
             )
         audio_client = create_speech_client(profile)
     blocked = len(notes) - len(ready)
@@ -2189,7 +2153,7 @@ def run_grammar_check(
         if model not in models:
             raise ValueError(
                 f"Anki note type {model!r} does not exist. "
-                "Run 'ankii anki setup-note-types' first."
+                "Run 'ankii anki update' first."
             )
     decks = sorted(invoke("deckNames"), key=str.casefold)
     if deck not in decks:
@@ -2358,14 +2322,11 @@ def main() -> None:
                 args.lesson, profile, settings.vocabulary_model, settings.grammar_model
             )
         elif args.command == "anki":
-            selected_model = getattr(args, "model", None) or getattr(args, "source", None)
             exit_code = run_anki(
                 args.anki_command,
-                selected_model,
                 profile,
                 settings.vocabulary_model,
                 settings.grammar_model,
-                getattr(args, "apply_default_style", False),
             )
         elif args.command == "import":
             exit_code = run_import(args, profile)

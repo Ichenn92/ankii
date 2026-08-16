@@ -60,8 +60,9 @@ TEMPLATE_FIELD_ALIASES = {
     "Example EN": "Example Native",
     "Everyday Example VN": "Example Target",
     "Everyday Example EN": "Example Native",
-    "Visual Media": "Image",
-    "Picture": "Image",
+    "Image": "Visual Media",
+    "Picture": "Visual Media",
+    "AIExplanation": "Notes",
 }
 
 EXAMPLE_TEMPLATE = """<!-- ankii examples -->
@@ -357,60 +358,160 @@ GRAMMAR_CSS = """.card {
 VOCABULARY_FIELDS = (
     "Target",
     "Native",
+    "Source",
+    "Audio",
+    "Components",
+    "Notes",
+    "Visual Media",
     "Example Target",
     "Example Native",
-    "Source",
-    "Lesson",
-    "AIExplanation",
-    "Image",
     "Import ID",
-    *VOCABULARY_AUDIO_FIELDS,
     RELATED_WORDS_FIELD,
+    *VOCABULARY_AUDIO_FIELDS,
 )
 
-VOCABULARY_FRONT = """{{#Image}}<div class="yhw-image">{{Image}}</div>{{/Image}}
-<div class="yhw-native">{{Native}}</div>
-"""
+VOCABULARY_CARD_TEMPLATE = "AnkiiCard"
+
+VOCABULARY_FRONT = """<div class="direction">Translate into Vietnamese</div>
+
+{{#Visual Media}}
+<div class="image">
+  {{Visual Media}}
+</div>
+{{/Visual Media}}
+
+<div class="english-prompt">
+  {{Native}}
+</div>
+
+{{#Example Native}}
+<div class="example-prompt">
+  {{Example Native}}
+</div>
+{{/Example Native}}"""
 
 VOCABULARY_BACK = """{{FrontSide}}
-<div class="yhw-answer">
-  <div class="yhw-target">{{Target}}</div>
+
+<div class="answer">
+  <div class="vietnamese">
+    {{Target}}
+""" + TARGET_AUDIO_TEMPLATE + """
 </div>
-"""
+
+  {{#Example Target}}
+  <div class="examples">
+    <div class="example-vn">
+      {{Example Target}}
+""" + INLINE_EXAMPLE_AUDIO_TEMPLATE + """
+    </div>
+  </div>
+  {{/Example Target}}
+</div>
+
+""" + SOURCE_TEMPLATE + "\n\n" + RELATED_WORDS_TEMPLATE
 
 VOCABULARY_CSS = """.card {
   box-sizing: border-box;
   max-width: 680px;
   margin: 0 auto;
   padding: 28px 22px;
+
   background: #faf8f3;
   color: #252525;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Arial,
+    sans-serif;
+
   text-align: center;
 }
-.yhw-image img {
+
+/* Instruction */
+.direction {
+  margin-bottom: 18px;
+  color: #888888;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Image */
+.image {
+  margin: 0 auto 22px;
+}
+.image img {
+  display: block;
+  width: auto;
   max-width: 100%;
-  max-height: 320px;
-  margin-bottom: 20px;
-  border-radius: 10px;
+  max-height: 280px;
+  margin: 0 auto;
+  border-radius: 12px;
+  object-fit: contain;
 }
-.yhw-target {
-  font-size: 25px;
-  line-height: 1.3;
+
+/* English shown on the front */
+.english-prompt {
+  color: #333333;
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1.35;
 }
-.yhw-answer {
-  margin-top: 24px;
-  padding-top: 20px;
+
+/* English example shown on the front */
+.example-prompt {
+  max-width: 560px;
+  margin: 20px auto 0;
+  padding: 16px 18px;
+  background: #ffffff;
+  border-left: 4px solid #d69b35;
+  border-radius: 8px;
+  color: #666666;
+  font-size: 18px;
+  font-style: italic;
+  line-height: 1.5;
+  text-align: left;
+}
+
+/* Revealed answer */
+.answer {
+  margin-top: 26px;
+  padding-top: 22px;
   border-top: 1px solid #d9d2c3;
 }
-.yhw-native {
-  font-size: 38px;
+.vietnamese {
+  color: #b23a2b;
+  font-size: 40px;
   font-weight: 750;
-  line-height: 1.45;
+  line-height: 1.3;
 }
+
+/* Vietnamese example */
+.examples {
+  max-width: 560px;
+  margin: 24px auto 0;
+  padding: 16px 18px;
+  background: #ffffff;
+  border-left: 4px solid #b23a2b;
+  border-radius: 8px;
+  text-align: left;
+}
+.example-vn {
+  color: #252525;
+  font-size: 22px;
+  font-weight: 500;
+  line-height: 1.55;
+}
+
+/* Smaller screens */
 @media (max-width: 480px) {
   .card { padding: 22px 14px; }
-  .yhw-native { font-size: 32px; }
+  .image img { max-height: 220px; }
+  .english-prompt { font-size: 29px; }
+  .vietnamese { font-size: 34px; }
 }
 """ + EXAMPLE_CSS + RELATED_WORDS_CSS
 
@@ -425,16 +526,17 @@ def bootstrap_learning_models(
     grammar_created = 0
 
     if vocabulary_model not in models:
-        front = _place_target_audio(VOCABULARY_FRONT)
-        back = _append_once(VOCABULARY_BACK, EXAMPLE_MARKERS[0], EXAMPLE_TEMPLATE)
-        back = _append_once(back, SOURCE_MARKERS[0], SOURCE_TEMPLATE)
-        back = _append_once(back, RELATED_WORDS_START, RELATED_WORDS_TEMPLATE)
-        back = _place_target_audio(back)
         invoke(
             "createModel",
             modelName=vocabulary_model,
             inOrderFields=list(VOCABULARY_FIELDS),
-            cardTemplates=[{"Name": "Vocabulary", "Front": front, "Back": back}],
+            cardTemplates=[
+                {
+                    "Name": VOCABULARY_CARD_TEMPLATE,
+                    "Front": VOCABULARY_FRONT,
+                    "Back": VOCABULARY_BACK,
+                }
+            ],
             css=VOCABULARY_CSS,
         )
         vocabulary_created = 1
@@ -485,6 +587,13 @@ def enforce_learning_models(
                 "updateModelTemplates",
                 model={"name": grammar_model, "templates": updated},
             )
+        for template_name in templates:
+            if template_name != "Grammar":
+                invoke(
+                    "modelTemplateRemove",
+                    modelName=grammar_model,
+                    templateName=template_name,
+                )
         styling = invoke("modelStyling", modelName=grammar_model)
         if str(styling.get("css", "")) != GRAMMAR_CSS:
             invoke("updateModelStyling", model={"name": grammar_model, "css": GRAMMAR_CSS})
@@ -803,8 +912,9 @@ def _migrate_generic_fields(
         pairs = [
             ("Vietnamese", "Target"),
             ("English", "Native"),
-            ("Visual Media", "Image"),
-            ("Picture", "Image"),
+            ("Image", "Visual Media"),
+            ("Picture", "Visual Media"),
+            ("AIExplanation", "Notes"),
             *pairs,
         ]
     removable: list[str] = []
@@ -857,18 +967,53 @@ def setup_note_type(model: str, *, apply_default_style: bool = False) -> dict[st
         )
 
     original_fields = list(invoke("modelFieldNames", modelName=model))
+    migrated_fields: list[str] = []
     templates: dict[str, dict[str, str]] | None = None
     if apply_default_style:
+        migrated_fields = _migrate_generic_fields(model, original_fields)
+        original_fields = list(invoke("modelFieldNames", modelName=model))
         required = {"Target", "Native"}
         missing_required = sorted(required.difference(original_fields))
         if missing_required:
             raise ValueError(
                 f"Cannot apply the default vocabulary style to {model!r}: missing required "
-                f"fields {', '.join(missing_required)}. Run 'ankii anki setup-note-types' "
+                f"fields {', '.join(missing_required)}. Run 'ankii anki update' "
                 "to migrate language-specific fields first."
             )
         managed_fields = VOCABULARY_FIELDS
         templates = invoke("modelTemplates", modelName=model)
+        if len(templates) == 1 and VOCABULARY_CARD_TEMPLATE not in templates:
+            old_name = next(iter(templates))
+            invoke(
+                "modelTemplateRename",
+                modelName=model,
+                oldTemplateName=old_name,
+                newTemplateName=VOCABULARY_CARD_TEMPLATE,
+            )
+            templates = {VOCABULARY_CARD_TEMPLATE: templates[old_name]}
+        elif VOCABULARY_CARD_TEMPLATE not in templates:
+            invoke(
+                "modelTemplateAdd",
+                modelName=model,
+                template={
+                    "Name": VOCABULARY_CARD_TEMPLATE,
+                    "Front": VOCABULARY_FRONT,
+                    "Back": VOCABULARY_BACK,
+                },
+            )
+            templates[VOCABULARY_CARD_TEMPLATE] = {
+                "Front": VOCABULARY_FRONT,
+                "Back": VOCABULARY_BACK,
+            }
+        for template_name in tuple(templates):
+            if template_name == VOCABULARY_CARD_TEMPLATE:
+                continue
+            invoke(
+                "modelTemplateRemove",
+                modelName=model,
+                templateName=template_name,
+            )
+            del templates[template_name]
         repaired_templates: dict[str, dict[str, str]] = {}
         for name, template in templates.items():
             repaired = dict(template)
@@ -929,13 +1074,8 @@ def setup_note_type(model: str, *, apply_default_style: bool = False) -> dict[st
     for name, template in templates.items():
         updated = dict(template)
         if apply_default_style:
-            updated["Front"] = _place_target_audio(VOCABULARY_FRONT)
-            back = _append_once(VOCABULARY_BACK, EXAMPLE_MARKERS[0], EXAMPLE_TEMPLATE)
-            back = _append_once(back, SOURCE_MARKERS[0], SOURCE_TEMPLATE)
-            back = _append_once(
-                back, RELATED_WORDS_START, RELATED_WORDS_TEMPLATE
-            )
-            updated["Back"] = _place_target_audio(back)
+            updated["Front"] = VOCABULARY_FRONT
+            updated["Back"] = VOCABULARY_BACK
         else:
             updated["Front"] = _place_target_audio(template["Front"])
             back = template["Back"]
@@ -972,6 +1112,8 @@ def setup_note_type(model: str, *, apply_default_style: bool = False) -> dict[st
         )
     if updated_css != css:
         invoke("updateModelStyling", model={"name": model, "css": updated_css})
+    for field in migrated_fields:
+        invoke("modelFieldRemove", modelName=model, fieldName=field)
 
     return {
         "fields_added": sum(field not in original_fields for field in managed_fields),
@@ -997,7 +1139,7 @@ def backfill_examples(review_path: Path, model: str) -> dict[str, int]:
     if missing:
         raise ValueError(
             f"Note type {model!r} is missing fields: {', '.join(sorted(missing))}. "
-            "Run 'ankii anki setup-note-type' first."
+            "Run 'ankii anki update' first."
         )
 
     source = str(review["lesson"].get("source_url", ""))

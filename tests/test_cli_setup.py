@@ -1,17 +1,21 @@
 from pathlib import Path
 from unittest.mock import call, patch
 
+import pytest
+
 from ankii import cli
 from ankii.audio import LocalVoice
 from ankii.settings import LanguageProfile, load_settings
 
 
-def test_setup_note_type_parser_accepts_default_style_flag() -> None:
-    args = cli.build_parser().parse_args(
-        ["anki", "setup-note-type", "Vocabulary", "--apply-default-style"]
-    )
+def test_anki_parser_exposes_only_simplified_commands() -> None:
+    parser = cli.build_parser()
 
-    assert args.apply_default_style is True
+    assert parser.parse_args(["anki", "check"]).anki_command == "check"
+    assert parser.parse_args(["anki", "list"]).anki_command == "list"
+    assert parser.parse_args(["anki", "update"]).anki_command == "update"
+    with pytest.raises(SystemExit):
+        parser.parse_args(["anki", "setup-note-type"])
 
 
 def test_setup_creates_settings_and_profile_directories(monkeypatch, tmp_path: Path) -> None:
@@ -157,51 +161,44 @@ def test_provision_anki_enforces_models_and_creates_missing_decks(monkeypatch, t
     assert disabled == ["Vietnamese", "French"]
 
 
-def test_setup_note_type_prompt_preserves_active_profile(monkeypatch) -> None:
+def test_anki_update_provisions_active_profile_and_tags_notes(monkeypatch) -> None:
     profile = LanguageProfile("french", "French", "English", "French", "A1", "B2")
-    monkeypatch.setattr(cli, "invoke", lambda action, **_kwargs: ["Vocabulary"])
-    monkeypatch.setattr(cli, "_choose", lambda *_args: "Vocabulary")
     monkeypatch.setattr("builtins.input", lambda _prompt: "UPDATE")
-    monkeypatch.setattr(
-        cli,
-        "setup_note_type",
-        lambda _model, **_kwargs: {
-            "fields_added": 0,
-            "notes_migrated": 0,
-            "templates_updated": 0,
-            "styling_updated": 0,
-        },
-    )
-    decks = []
-    monkeypatch.setattr(
-        cli, "_disable_deck_audio_autoplay", lambda deck: decks.append(deck) or True
-    )
-
-    assert cli.run_anki("setup-note-type", profile=profile) == 0
-
-    assert decks == ["French"]
-
-
-@patch("ankii.cli.invoke")
-def test_bootstrap_note_types_creates_profile_deck(invoke, monkeypatch) -> None:
-    profile = LanguageProfile("french", "French", "English", "French", "A1", "B2")
+    provisioned = []
     calls = []
     monkeypatch.setattr(
-        cli,
-        "bootstrap_learning_models",
-        lambda vocabulary, grammar: calls.append((vocabulary, grammar))
-        or {"vocabulary_created": 1, "grammar_created": 1},
+        cli, "_provision_anki", lambda _settings, decks: provisioned.extend(decks)
     )
-    monkeypatch.setattr(cli, "_disable_deck_audio_autoplay", lambda _deck: True)
-    monkeypatch.setattr("builtins.input", lambda _prompt: "CREATE")
-    invoke.return_value = []
+    monkeypatch.setattr(
+        cli,
+        "invoke",
+        lambda action, **kwargs: calls.append((action, kwargs))
+        or ([10] if action == "findNotes" else None),
+    )
 
-    assert cli.run_anki(
-        "bootstrap-note-types",
-        profile=profile,
-        vocabulary_model="Words",
-        grammar_model="Rules",
-    ) == 0
+    assert cli.run_anki("update", profile=profile) == 0
 
-    assert calls == [("Words", "Rules")]
-    assert call("createDeck", deck="French") in invoke.mock_calls
+    assert provisioned == ["French"]
+    assert ("addTags", {"notes": [10], "tags": "language::french"}) in calls
+
+
+def test_anki_list_reports_current_profile_data(monkeypatch, capsys) -> None:
+    profile = LanguageProfile("french", "French", "English", "French", "A1", "B2")
+
+    def fake_invoke(action, **_kwargs):
+        return {
+            "modelNames": [],
+            "deckNames": ["French"],
+            "findNotes": [1, 2],
+            "findCards": [11, 12],
+        }[action]
+
+    monkeypatch.setattr(cli, "invoke", fake_invoke)
+
+    assert cli.run_anki("list", profile=profile) == 0
+
+    output = capsys.readouterr().out
+    assert "Profile: french" in output
+    assert "Deck: French (present)" in output
+    assert "Notes: 2" in output
+    assert "Cards: 2" in output

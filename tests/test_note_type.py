@@ -9,8 +9,10 @@ from ankii.note_type import (
     GRAMMAR_CSS,
     GRAMMAR_FIELDS,
     TARGET_AUDIO_TEMPLATE,
+    VOCABULARY_BACK,
     VOCABULARY_CSS,
     VOCABULARY_FIELDS,
+    VOCABULARY_FRONT,
     _close_unbalanced_css_blocks,
     _migrate_generic_fields,
     _place_example_audio,
@@ -36,14 +38,32 @@ def test_bootstrap_learning_models_creates_complete_generic_models(invoke) -> No
         if item.args == ("createModel",) and item.kwargs["modelName"] == "Vocabulary"
     )
     assert vocabulary_call.kwargs["inOrderFields"] == list(VOCABULARY_FIELDS)
+    assert VOCABULARY_FIELDS == (
+        "Target",
+        "Native",
+        "Source",
+        "Audio",
+        "Components",
+        "Notes",
+        "Visual Media",
+        "Example Target",
+        "Example Native",
+        "Import ID",
+        "Related Words",
+        "Target Audio",
+        "Example Audio",
+    )
     template = vocabulary_call.kwargs["cardTemplates"][0]
+    assert template["Front"] == VOCABULARY_FRONT
+    assert template["Back"] == VOCABULARY_BACK
     assert "{{Native}}" in template["Front"]
     assert "{{Target}}" in template["Back"]
     assert "{{Target Audio}}" in template["Back"]
     assert "{{Example Target}}" in template["Back"]
-    assert "{{Example Native}}" in template["Back"]
+    assert "{{Example Native}}" in template["Front"]
     assert "{{Source}}" in template["Back"]
     assert "{{Related Words}}" in template["Back"]
+    assert template["Name"] == "AnkiiCard"
     grammar_call = next(
         item
         for item in invoke.mock_calls
@@ -89,7 +109,9 @@ def test_setup_note_type_can_apply_default_vocabulary_design(invoke) -> None:
     invoke.side_effect = [
         ["Vocabulary"],
         list(VOCABULARY_FIELDS),
+        list(VOCABULARY_FIELDS),
         {"Vocabulary": {"Front": "old front", "Back": "old back"}},
+        None,
         None,
         {"css": ".old {}"},
         None,
@@ -100,7 +122,7 @@ def test_setup_note_type_can_apply_default_vocabulary_design(invoke) -> None:
     template_update = next(
         item for item in invoke.mock_calls if item.args == ("updateModelTemplates",)
     )
-    template = template_update.kwargs["model"]["templates"]["Vocabulary"]
+    template = template_update.kwargs["model"]["templates"]["AnkiiCard"]
     assert "{{Native}}" in template["Front"]
     assert "{{Target}}" in template["Back"]
     assert "{{Target Audio}}" in template["Back"]
@@ -110,13 +132,47 @@ def test_setup_note_type_can_apply_default_vocabulary_design(invoke) -> None:
     ) in invoke.mock_calls
     assert result["templates_updated"] == 1
     assert result["styling_updated"] == 1
+    assert call(
+        "modelTemplateRename",
+        modelName="Vocabulary",
+        oldTemplateName="Vocabulary",
+        newTemplateName="AnkiiCard",
+    ) in invoke.mock_calls
+
+
+@patch("ankii.note_type.invoke")
+def test_default_vocabulary_design_removes_extra_card_types(invoke) -> None:
+    invoke.side_effect = [
+        ["Vocabulary"],
+        list(VOCABULARY_FIELDS),
+        list(VOCABULARY_FIELDS),
+        {
+            "AnkiiCard": {"Front": "old front", "Back": "old back"},
+            "Legacy Reverse": {"Front": "reverse", "Back": "legacy"},
+        },
+        None,
+        None,
+        {"css": VOCABULARY_CSS},
+    ]
+
+    setup_note_type("Vocabulary", apply_default_style=True)
+
+    assert call(
+        "modelTemplateRemove",
+        modelName="Vocabulary",
+        templateName="Legacy Reverse",
+    ) in invoke.mock_calls
+    template_update = next(
+        item for item in invoke.mock_calls if item.args == ("updateModelTemplates",)
+    )
+    assert set(template_update.kwargs["model"]["templates"]) == {"AnkiiCard"}
 
 
 @patch("ankii.note_type.invoke")
 def test_default_vocabulary_design_requires_generic_fields(invoke) -> None:
-    invoke.side_effect = [["French"], ["French", "English"]]
+    invoke.side_effect = [["French"], ["French", "Native"], ["French", "Native"]]
 
-    with pytest.raises(ValueError, match="setup-note-types"):
+    with pytest.raises(ValueError, match="ankii anki update"):
         setup_note_type("French", apply_default_style=True)
 
     assert not any(item.args == ("modelFieldAdd",) for item in invoke.mock_calls)
