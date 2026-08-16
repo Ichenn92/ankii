@@ -6,6 +6,14 @@ from ankii.audio import LocalVoice
 from ankii.settings import LanguageProfile, load_settings
 
 
+def test_setup_note_type_parser_accepts_default_style_flag() -> None:
+    args = cli.build_parser().parse_args(
+        ["anki", "setup-note-type", "Vocabulary", "--apply-default-style"]
+    )
+
+    assert args.apply_default_style is True
+
+
 def test_setup_creates_settings_and_profile_directories(monkeypatch, tmp_path: Path) -> None:
     settings_path = tmp_path / "local-data" / "anki.toml"
     monkeypatch.setattr(cli, "get_openai_api_key", lambda: (None, None))
@@ -120,7 +128,7 @@ def test_setup_note_type_prompt_preserves_active_profile(monkeypatch) -> None:
     monkeypatch.setattr(
         cli,
         "setup_note_type",
-        lambda _model: {
+        lambda _model, **_kwargs: {
             "fields_added": 0,
             "notes_migrated": 0,
             "templates_updated": 0,

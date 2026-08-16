@@ -287,6 +287,11 @@ Run 'ankii COMMAND --help' for help with a specific command.""",
         nargs="?",
         help="Exact note type name (prompted when omitted).",
     )
+    setup_parser.add_argument(
+        "--apply-default-style",
+        action="store_true",
+        help="Replace the note type's card templates and CSS with ankii's default design.",
+    )
     setup_models_parser = anki_commands.add_parser(
         "setup-note-types",
         help="Migrate language-specific fields to generic Vocabulary and Grammar fields.",
@@ -450,6 +455,7 @@ def run_anki(
     profile: LanguageProfile = DEFAULT_PROFILE,
     vocabulary_model: str = "Vocabulary",
     grammar_model: str = "Grammar",
+    apply_default_style: bool = False,
 ) -> int:
     if command == "status":
         version = invoke("version")
@@ -471,7 +477,7 @@ def run_anki(
         if input("Type UPDATE to continue: ").strip() != "UPDATE":
             print("Update cancelled. No changes were made.")
             return 0
-        result = setup_note_type(model)
+        result = setup_note_type(model, apply_default_style=apply_default_style)
         autoplay_disabled = _disable_deck_audio_autoplay(profile.deck)
         print(f"Fields added:      {result['fields_added']}")
         print(f"Notes migrated:    {result['notes_migrated']}")
@@ -491,6 +497,7 @@ def run_anki(
             profile,
             vocabulary_model,
             grammar_model,
+            apply_default_style,
         )
     elif command == "setup-note-types":
         source_model = model or profile.study_language
@@ -2333,6 +2340,7 @@ def main() -> None:
                 profile,
                 settings.vocabulary_model,
                 settings.grammar_model,
+                getattr(args, "apply_default_style", False),
             )
         elif args.command == "import":
             exit_code = run_import(args, profile)

@@ -792,7 +792,7 @@ def _migrate_generic_fields(
     return removable
 
 
-def setup_note_type(model: str) -> dict[str, int]:
+def setup_note_type(model: str, *, apply_default_style: bool = False) -> dict[str, int]:
     """Add the example fields, migrate legacy values, and enhance card backs.
 
     Legacy fields are intentionally retained. Existing values are copied only when
@@ -806,7 +806,18 @@ def setup_note_type(model: str) -> dict[str, int]:
         )
 
     original_fields = list(invoke("modelFieldNames", modelName=model))
-    managed_fields = (*LEGACY_EXAMPLE_FIELDS, *VOCABULARY_AUDIO_FIELDS, "Import ID")
+    if apply_default_style:
+        required = {"Target", "Native"}
+        missing_required = sorted(required.difference(original_fields))
+        if missing_required:
+            raise ValueError(
+                f"Cannot apply the default vocabulary style to {model!r}: missing required "
+                f"fields {', '.join(missing_required)}. Run 'ankii anki setup-note-types' "
+                "to migrate language-specific fields first."
+            )
+        managed_fields = VOCABULARY_FIELDS
+    else:
+        managed_fields = (*LEGACY_EXAMPLE_FIELDS, *VOCABULARY_AUDIO_FIELDS, "Import ID")
     for field in managed_fields:
         if field not in original_fields:
             invoke("modelFieldAdd", modelName=model, fieldName=field)
@@ -847,36 +858,47 @@ def setup_note_type(model: str) -> dict[str, int]:
     changed_templates: dict[str, dict[str, str]] = {}
     for name, template in templates.items():
         updated = dict(template)
-        updated["Front"] = _place_target_audio(template["Front"])
-        back = template["Back"]
-        for markers in (LEGACY_EXAMPLE_MARKERS, EXAMPLE_MARKERS):
-            back = _remove_marked_block(back, *markers)
-        updated["Back"] = _append_examples_if_missing(
-            back, LEGACY_EXAMPLE_FIELDS, EXAMPLE_TEMPLATE
-        )
-        updated["Back"] = _place_example_audio(updated["Back"])
-        updated["Back"] = _place_target_audio(updated["Back"])
-        if "Source" in original_fields:
-            for markers in (LEGACY_SOURCE_MARKERS, SOURCE_MARKERS):
-                updated["Back"] = _remove_marked_block(updated["Back"], *markers)
+        if apply_default_style:
+            updated["Front"] = _place_target_audio(VOCABULARY_FRONT)
+            back = _append_once(VOCABULARY_BACK, EXAMPLE_MARKERS[0], EXAMPLE_TEMPLATE)
+            back = _append_once(back, SOURCE_MARKERS[0], SOURCE_TEMPLATE)
             updated["Back"] = _append_once(
-                updated["Back"], SOURCE_MARKERS[0], SOURCE_TEMPLATE
+                back, RELATED_WORDS_START, RELATED_WORDS_TEMPLATE
             )
+        else:
+            updated["Front"] = _place_target_audio(template["Front"])
+            back = template["Back"]
+            for markers in (LEGACY_EXAMPLE_MARKERS, EXAMPLE_MARKERS):
+                back = _remove_marked_block(back, *markers)
+            updated["Back"] = _append_examples_if_missing(
+                back, LEGACY_EXAMPLE_FIELDS, EXAMPLE_TEMPLATE
+            )
+            updated["Back"] = _place_example_audio(updated["Back"])
+            updated["Back"] = _place_target_audio(updated["Back"])
+            if "Source" in original_fields:
+                for markers in (LEGACY_SOURCE_MARKERS, SOURCE_MARKERS):
+                    updated["Back"] = _remove_marked_block(updated["Back"], *markers)
+                updated["Back"] = _append_once(
+                    updated["Back"], SOURCE_MARKERS[0], SOURCE_TEMPLATE
+                )
         changed_templates[name] = updated
     if changed_templates != templates:
         invoke("updateModelTemplates", model={"name": model, "templates": changed_templates})
 
     styling: dict[str, Any] = invoke("modelStyling", modelName=model)
     css = str(styling.get("css", ""))
-    updated_css = css
-    for markers in (LEGACY_EXAMPLE_CSS_MARKERS, EXAMPLE_CSS_MARKERS):
-        updated_css = _remove_marked_block(updated_css, *markers)
-    for markers in (LEGACY_SOURCE_CSS_MARKERS, SOURCE_CSS_MARKERS):
-        updated_css = _remove_marked_block(updated_css, *markers)
-    updated_css = _close_unbalanced_css_blocks(updated_css)
-    updated_css = _append_once(
-        updated_css, EXAMPLE_CSS_MARKERS[0], EXAMPLE_CSS
-    )
+    if apply_default_style:
+        updated_css = VOCABULARY_CSS
+    else:
+        updated_css = css
+        for markers in (LEGACY_EXAMPLE_CSS_MARKERS, EXAMPLE_CSS_MARKERS):
+            updated_css = _remove_marked_block(updated_css, *markers)
+        for markers in (LEGACY_SOURCE_CSS_MARKERS, SOURCE_CSS_MARKERS):
+            updated_css = _remove_marked_block(updated_css, *markers)
+        updated_css = _close_unbalanced_css_blocks(updated_css)
+        updated_css = _append_once(
+            updated_css, EXAMPLE_CSS_MARKERS[0], EXAMPLE_CSS
+        )
     if updated_css != css:
         invoke("updateModelStyling", model={"name": model, "css": updated_css})
 
@@ -884,7 +906,7 @@ def setup_note_type(model: str) -> dict[str, int]:
         "fields_added": sum(field not in original_fields for field in managed_fields),
         "notes_migrated": migrated,
         "templates_updated": sum(
-            template["Back"] != changed_templates[name]["Back"]
+            template != changed_templates[name]
             for name, template in templates.items()
         ),
         "styling_updated": int(updated_css != css),

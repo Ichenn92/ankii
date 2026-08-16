@@ -1,5 +1,7 @@
 from unittest.mock import call, patch
 
+import pytest
+
 from ankii.note_type import (
     EXAMPLE_CSS,
     EXAMPLE_TEMPLATE,
@@ -7,6 +9,7 @@ from ankii.note_type import (
     GRAMMAR_CSS,
     GRAMMAR_FIELDS,
     TARGET_AUDIO_TEMPLATE,
+    VOCABULARY_CSS,
     VOCABULARY_FIELDS,
     _close_unbalanced_css_blocks,
     _migrate_generic_fields,
@@ -55,6 +58,43 @@ def test_bootstrap_learning_models_leaves_existing_models_untouched(invoke) -> N
 
     assert result == {"vocabulary_created": 0, "grammar_created": 0}
     invoke.assert_called_once_with("modelNames")
+
+
+@patch("ankii.note_type.invoke")
+def test_setup_note_type_can_apply_default_vocabulary_design(invoke) -> None:
+    invoke.side_effect = [
+        ["Vocabulary"],
+        list(VOCABULARY_FIELDS),
+        {"Vocabulary": {"Front": "old front", "Back": "old back"}},
+        None,
+        {"css": ".old {}"},
+        None,
+    ]
+
+    result = setup_note_type("Vocabulary", apply_default_style=True)
+
+    template_update = next(
+        item for item in invoke.mock_calls if item.args == ("updateModelTemplates",)
+    )
+    template = template_update.kwargs["model"]["templates"]["Vocabulary"]
+    assert "{{Target}}" in template["Front"]
+    assert "{{Native}}" in template["Back"]
+    assert "{{Example Target}}" in template["Back"]
+    assert call(
+        "updateModelStyling", model={"name": "Vocabulary", "css": VOCABULARY_CSS}
+    ) in invoke.mock_calls
+    assert result["templates_updated"] == 1
+    assert result["styling_updated"] == 1
+
+
+@patch("ankii.note_type.invoke")
+def test_default_vocabulary_design_requires_generic_fields(invoke) -> None:
+    invoke.side_effect = [["French"], ["French", "English"]]
+
+    with pytest.raises(ValueError, match="setup-note-types"):
+        setup_note_type("French", apply_default_style=True)
+
+    assert not any(item.args == ("modelFieldAdd",) for item in invoke.mock_calls)
 
 
 @patch("ankii.note_type.invoke")
